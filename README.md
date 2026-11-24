@@ -5,7 +5,7 @@
 **Like a Dragon: Kenzan! (PS3, 2008), recompiled into a real PC program for Linux and Windows, in English.**<br>
 No emulator while you play.
 
-[![Latest release](https://img.shields.io/github/v/release/OWNER/REPO?label=latest&color=f2b200)](../../releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/IvanBarbosaFilho/Yakuza-Kenzan-Recomp?label=latest&color=f2b200)](../../releases/latest)
 [![Linux](https://img.shields.io/badge/Linux-AppImage-FCC624?logo=linux&logoColor=black)](#linux)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#windows)
 [![Renderer: Vulkan](https://img.shields.io/badge/renderer-Vulkan-AC162C?logo=vulkan&logoColor=white)](#how-it-works)
