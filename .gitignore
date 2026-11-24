@@ -1,0 +1,16 @@
+game
+work
+port/recompiled
+port/spu
+port/lle
+port/lle_spu
+port/out
+# build output and caches
+launcher/target
+__pycache__/
+*.pyc
+# the player's own settings
+kenzan.ini
+input.toml
+# debug scratch (decompiled game shaders)
+tools/vpdiff

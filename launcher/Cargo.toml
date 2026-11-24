@@ -1,0 +1,17 @@
+[package]
+name = "kenzan-launcher"
+version = "0.1.0"
+edition = "2021"
+description = "Launcher and settings for the Ryu ga Gotoku Kenzan! PC port"
+
+[dependencies]
+eframe = { version = "0.31", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+sha1_smol = "1"
+flate2 = "1"
+rfd = "0.15"
+fs4 = "0.13"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
