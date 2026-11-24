@@ -780,11 +780,42 @@ static unsigned __stdcall audio_mix_thread_func(void* arg)
      * dropped the surplus: 20% of the audio thrown away, and a guest mixer
      * (GH3's FMOD) that could not keep ahead of the read index played gaps.
      * With no device, pace on the performance counter instead. */
+    /* (Kenzan) With a device, also pace on the performance counter: one block every 5.33 ms, the
+     * device kept between 4 blocks and 6 blocks + 480 frames queued. Mixing whenever the device had
+     * room filled its whole 60 ms buffer at once (11 blocks at the start, then ~2 per 10 ms period),
+     * and Kenzan's 8-block rings were lapped: the mixer played blocks the game had not written yet,
+     * zeroed or half written -- crackling. Below 4 queued the clock re-anchors and mixes at once; more
+     * than 2 blocks late it re-anchors instead of mixing a burst. PS3_AUDIO_PACE=device: as before
+     * (needs timeBeginPeriod(1), port/main.cpp, for Sleep(1) to be ~1 ms). */
+    const char* pace_env = getenv("PS3_AUDIO_PACE");
+    const int pace_device = pace_env && !strcmp(pace_env, "device");
     LARGE_INTEGER qf, q0; QueryPerformanceFrequency(&qf); QueryPerformanceCounter(&q0);
+    const long long blk_ticks = (long long)CELL_AUDIO_BLOCK_SAMPLES * qf.QuadPart / CELL_AUDIO_SAMPLE_RATE;
     unsigned long long blocks = 0;
     while (s_mix_thread_running) {
         const int room = audio_backend_room();
-        if (room >= 0 && room < CELL_AUDIO_BLOCK_SAMPLES) { audio_backend_wait(); continue; }
+        if (room >= 0 && room < CELL_AUDIO_BLOCK_SAMPLES) {
+            if (pace_device) audio_backend_wait(); else Sleep(1);
+            continue;
+        }
+#if AUDIO_BACKEND_WASAPI
+        if (room >= 0 && !pace_device) {
+            const int queued = (int)s_wasapi_buf_frames - room;
+            const int lo = CELL_AUDIO_BLOCK_SAMPLES * 4;
+            int hi = CELL_AUDIO_BLOCK_SAMPLES * 6 + 480;
+            if (hi > (int)s_wasapi_buf_frames - CELL_AUDIO_BLOCK_SAMPLES)
+                hi = (int)s_wasapi_buf_frames - CELL_AUDIO_BLOCK_SAMPLES;
+            LARGE_INTEGER now; QueryPerformanceCounter(&now);
+            const long long due = q0.QuadPart + (long long)blocks * blk_ticks;
+            if (queued >= lo) {
+                if (queued >= hi || now.QuadPart < due) { Sleep(1); continue; }
+                if (now.QuadPart - due > 2 * blk_ticks)
+                    q0.QuadPart = now.QuadPart - (long long)blocks * blk_ticks;
+            } else {
+                q0.QuadPart = now.QuadPart - (long long)blocks * blk_ticks;
+            }
+        }
+#endif
         if (room < 0) {
             LARGE_INTEGER now; QueryPerformanceCounter(&now);
             const long long due = q0.QuadPart +

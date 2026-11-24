@@ -1670,7 +1670,7 @@ static std::string settings_dir()
 {
 #ifdef _WIN32
     const char* a = getenv("APPDATA");
-    return a && *a ? join(slashes(a), "inFAMOUS2-port") : std::string();
+    return a && *a ? join(slashes(a), "kenzan-port") : std::string();
 #else
     const char* x = getenv("XDG_CONFIG_HOME");
     const char* h = getenv("HOME");

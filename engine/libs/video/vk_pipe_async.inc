@@ -714,7 +714,14 @@ static void vk_pa_cfg_read(void)
     if (s_pa.cfg) return;
     s_pa.cfg = 1;
     const char* e = getenv("PS3RECOMP_VK_PIPE_ASYNC");
-    s_pa.mode = e && *e ? atoi(e) : 1;
+    /* (Kenzan) default 0: no draw is ever left out for a pipeline not built yet -- every draw
+     * waits for its own (vk_pa_skippable is 0, vk_pw_take never returns -1), the recipes are still
+     * prewarmed on the workers. Left-out draws include the blended full-screen passes without a
+     * depth test (PS3RECOMP_VK_PIPE_SKIP_BLEND): the logos' fades to black. On the Windows AMD
+     * driver a new pipeline takes 10-50 ms, those fades came and went from frame to frame, and the
+     * game blinked black as it started. The price: a hitch where a pipeline is new (the first
+     * session, mostly). PS3RECOMP_VK_PIPE_ASYNC=1: leave draws out as before. */
+    s_pa.mode = e && *e ? atoi(e) : 0;
     e = getenv("PS3RECOMP_VK_PIPE_ASYNC_XLATE");
     s_pa.xlate = s_pa.mode && !(e && *e == '0');
     e = getenv("PS3RECOMP_VK_PIPE_RECIPES");
@@ -766,6 +773,18 @@ static void vk_pa_start(void)
     s_pw.run = 1;
     if (s_pa.recipes && s_sc.on) vk_pw_load();
     if (s_pa.prewarm && s_sc.on) vk_pw_plan();
+    /* (Kenzan) A cold cache (the first session: fewer than 300 recipes; a normal one records 700+
+     * by the title screen) waits for every pipeline instead of leaving draws out. Left-out draws
+     * are held back at most PS3RECOMP_VK_PIPE_HOLD_MS, and on the Windows AMD driver a cold
+     * pipeline takes long enough that those frames got through: the first start blinked black.
+     * The first session hitches at new scenes instead; later ones are as before. Only when
+     * PS3RECOMP_VK_PIPE_ASYNC is not set; PS3RECOMP_VK_PIPE_COLD_SYNC=0 turns this off. */
+    { const char* ea = getenv("PS3RECOMP_VK_PIPE_ASYNC"), * ec = getenv("PS3RECOMP_VK_PIPE_COLD_SYNC");
+      if (!(ea && *ea) && !(ec && *ec == '0') && s_pa.mode && s_pw.npw < 300u) {
+          s_pa.mode = 0; s_pa.xlate = 0; s_pa.hold_ns = 0;
+          VK_LOG("pipelines: cold cache (%u recipes): every draw waits for its pipeline this session "
+                 "(PS3RECOMP_VK_PIPE_COLD_SYNC=0: leave draws out as usual)\n", s_pw.npw);
+      } }
     s_pw.t0 = ps3_ft_now();
     if (!s_pw.npw) s_pw.done = 1;
     const u32 want = (s_pa.mode || s_pw.npw) ? s_pa.nthreads : 0u;

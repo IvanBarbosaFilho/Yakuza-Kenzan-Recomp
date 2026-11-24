@@ -674,6 +674,14 @@ static void vk_tq_install(void)
     const char* e = getenv("PS3RECOMP_VK_THREADED");
     const char* b = getenv("PS3RECOMP_VK_BATCH");
     if ((e && e[0] == '0') || (b && b[0] == '0')) return;   /* default on (2026-11-08) */
+    /* (Kenzan) default OFF: the recording thread (and the present on it, PS3RECOMP_VK_PRESENT_ASYNC)
+     * is Windows-only and was tuned for inFAMOUS 2; every Kenzan fix was made and checked on the
+     * direct path the Linux build always takes. Suspected of the Windows-only black blinking at
+     * start. PS3RECOMP_VK_THREADED=1 (or 2) turns it on. */
+    if (!(e && e[0])) {
+        fprintf(stderr, "[RSX vulkan] threaded command recording off (Kenzan default; PS3RECOMP_VK_THREADED=1 = on)\n");
+        return;
+    }
     s_tq.ring = (u8*)VirtualAlloc(NULL, TQ_RING_BYTES + 4096u, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!s_tq.ring) return;
 #define TQ_SAVE(name) r##name = p##name;

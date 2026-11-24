@@ -249,7 +249,7 @@ static void default_ini_path(char* out, size_t n)
     out[0] = 0;
 #ifdef _WIN32
     const char* base = getenv("APPDATA");
-    if (base && *base) snprintf(out, n, "%s\\inFAMOUS2-port\\settings.ini", base);
+    if (base && *base) snprintf(out, n, "%s\\kenzan-port\\settings.ini", base);
 #else
     const char* x = getenv("XDG_CONFIG_HOME");
     const char* h = getenv("HOME");

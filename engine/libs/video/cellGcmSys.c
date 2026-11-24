@@ -136,6 +136,12 @@ static volatile unsigned s_flips_shown;
  * give-up on label 0x30 had hidden it. KZ_VSYNC=0: complete at FLIP_HEAD as before. */
 static volatile int s_kz_vs_label1;      /* a flip waits for its vblank to clear label 1 */
 static volatile u32 s_kz_fsema_la;       /* label 0x30 to set to 1 at the next vblank */
+/* (Kenzan) KZ_FLIPLOG default: off (it was on, on Windows, for the black blinking: fixed) */
+#ifdef _WIN32
+#define KZ_FLIPLOG_DEFAULT 0
+#else
+#define KZ_FLIPLOG_DEFAULT 0
+#endif
 static int kz_vsync_on(void)
 {
     static int on = -1; if (on < 0) { const char* e = getenv("KZ_VSYNC"); on = !(e && *e == '0'); }
@@ -2415,7 +2421,7 @@ static void gcm_word_effects(u32 subch, u32 m, u32 dw, u32 getoff)
          * picture blinked. Flipped as an RSX-executed (in-FIFO) flip, and label 1 is cleared as
          * the driver does on every flip (the title waits for it right after). KZ_FLIPQ=0: old. */
         static int fq = -1; if (fq < 0) { const char* e = getenv("KZ_FLIPQ"); fq = !(e && *e == '0'); }
-        { static int fl = -1, n; if (fl < 0) { const char* e = getenv("KZ_FLIPLOG"); fl = e ? atoi(e) : 0; }
+        { static int fl = -1, n; if (fl < 0) { const char* e = getenv("KZ_FLIPLOG"); fl = e ? atoi(e) : KZ_FLIPLOG_DEFAULT; }
           if (fl && n++ < fl) fprintf(stderr, "[kzflip] FLIP_HEAD dw=0x%08X lastq=%u pending=%d label30=%u\n",
                                       dw, s_kz_last_queued[(mfull - 0xE920u) >> 2], s_flip_pending,
                                       vm_read32(GCM_LABEL_GUEST_BASE + 0x30u)); }
@@ -2429,7 +2435,7 @@ static void gcm_word_effects(u32 subch, u32 m, u32 dw, u32 getoff)
         }
     } else if (mfull >= 0xE940u && mfull < 0xE960u) {
         s_kz_last_queued[((mfull - 0xE940u) >> 2) & 1u] = dw & 7u;   /* (Kenzan) DRIVER_QUEUE */
-        { static int fl = -1, n; if (fl < 0) { const char* e = getenv("KZ_FLIPLOG"); fl = e ? atoi(e) : 0; }
+        { static int fl = -1, n; if (fl < 0) { const char* e = getenv("KZ_FLIPLOG"); fl = e ? atoi(e) : KZ_FLIPLOG_DEFAULT; }
           if (fl && n++ < fl) fprintf(stderr, "[kzflip] QUEUE m=0x%04X dw=0x%08X pending=%d\n", mfull, dw, s_flip_pending); }
         gcm_2d_method(subch, m, dw);
     } else if (subch == 0 || (subch == 1 && !gcm_subch1_2d())) {
@@ -3533,8 +3539,12 @@ s32 cellGcmSetDisplayBuffer(u32 bufferId, u32 offset, u32 pitch,
      * always in RSX local memory (location 0). */
     if (rsx_live_draw_enabled())
         rsx_live_draw_set_display_buffer(bufferId, 0, offset, pitch, width, height);
-    if (rsx_draw_engine_enabled())
-        rsx_draw_engine_set_display_buffer(bufferId, 0, offset, pitch, width, height);
+    /* (Kenzan) Always, not only when rsx_draw_engine_enabled(): that reads 0 until the backend
+     * has registered, and on Windows the title sets its display buffers before the window and
+     * Vulkan are up. Dropped, the engine had no scanout to present (every present: valid=0) and
+     * showed whatever target was bound at that moment -- 4 frames in 5 an intermediate, black:
+     * the Windows-only blinking at start. Recording it costs nothing when the engine is off. */
+    rsx_draw_engine_set_display_buffer(bufferId, 0, offset, pitch, width, height);
 
     return CELL_OK;
 }

@@ -8879,6 +8879,24 @@ static void eng_present(u32 buffer_id)
     eng_mods_poll();   /* the PC menu switched texture packs or their dump (and the tests' toggle file) */
     eng_shres_frame();   /* [shadow] every 600 frames: caster draws and clears into the scaled maps */
     const u32 target = eng_present_surface(buffer_id);
+    /* (Kenzan) KZ_PRESENTLOG=<n>: the first n presents -- the time, the buffer asked, the surface
+     * shown (its offset and stamp: when it was last drawn), the draws since the last present. On by
+     * default off (was on, on Windows, while its black blinking was investigated: fixed). */
+    { static int pl = -1, n; static unsigned long long t0;
+      if (pl < 0) { const char* e = getenv("KZ_PRESENTLOG");
+#ifdef _WIN32
+                    pl = e ? atoi(e) : 0;
+#else
+                    pl = e ? atoi(e) : 0;
+#endif
+      }
+      if (pl && n < pl) { extern unsigned long long ps3_ms_now(void);
+          const unsigned long long now = ps3_ms_now(); if (!t0) t0 = now; n++;
+          const int ok = target != ENG_INVALID;
+          fprintf(stderr, "[kzpres] #%d t=%llu buf=%u slot=%d off=%08X stamp=%u clock=%u draws=%u frame=%u valid=%d\n",
+                  n, now - t0, buffer_id, ok ? (int)target : -1, ok ? g.surfaces[target].offset : 0u,
+                  ok ? (unsigned)g.surfaces[target].stamp : 0u, (unsigned)s_surf_clock, g.guest_draws, g.frames,
+                  (buffer_id < 8 && g.display_buffers[buffer_id].valid) ? 1 : 0); } }
     if (target == ENG_INVALID) return;
     if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
         u32 current = eng_current_surface();

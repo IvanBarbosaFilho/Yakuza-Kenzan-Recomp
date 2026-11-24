@@ -26,7 +26,7 @@
  *
  * Settings (environment variable names; menu changes apply at once where the
  * module supports it, see include/ps3emu/ps3_settings.h, and are saved):
- *   PS3_OVERLAY_INI=<path>   the settings file; unset = %APPDATA%\inFAMOUS2-port\settings.ini
+ *   PS3_OVERLAY_INI=<path>   the settings file; unset = %APPDATA%\kenzan-port\settings.ini
  *                            (~/.config/infamous2-port/settings.ini off Windows); set but
  *                            empty = nothing is read or saved (test runs)
  *   PS3_OVERLAY_DEFAULTS="K=V;K=V"  defaults below the file (a launcher's own defaults)
