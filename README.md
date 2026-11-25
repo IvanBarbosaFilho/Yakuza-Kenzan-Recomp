@@ -4,11 +4,6 @@
 
 <h1 align="center">Yakuza Kenzan Recomp</h1>
 
-
-<div align="center">
-
-# Ryu ga Gotoku Kenzan!: native PC port
-
 **Like a Dragon: Kenzan! (PS3, 2008), recompiled into a real PC program for Linux and Windows, in English.**<br>
 No emulator while you play.
 
