@@ -747,7 +747,7 @@ static void vk_pa_cfg_read(void)
      * driver a new pipeline takes 10-50 ms, those fades came and went from frame to frame, and the
      * game blinked black as it started. The price: a hitch where a pipeline is new (the first
      * session, mostly). PS3RECOMP_VK_PIPE_ASYNC=1: leave draws out as before. */
-    s_pa.mode = e && *e ? atoi(e) : 0;
+    s_pa.mode = e && *e ? atoi(e) : 1;   /* async by default again (2026-11-25): the Windows start blinking it was blamed for was the display buffers registered too early (cellGcmSys.c), fixed; a new shader no longer drops 1-2 frames */
     e = getenv("PS3RECOMP_VK_PIPE_ASYNC_XLATE");
     s_pa.xlate = s_pa.mode && !(e && *e == '0');
     e = getenv("PS3RECOMP_VK_PIPE_RECIPES");
