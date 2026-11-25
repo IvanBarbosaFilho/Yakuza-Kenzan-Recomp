@@ -1,3 +1,10 @@
+<p align="center">
+  <img src="packaging/linux/kenzan.png" width="160" alt="Kenzan logo">
+</p>
+
+<h1 align="center">Yakuza Kenzan Recomp</h1>
+
+
 <div align="center">
 
 # Ryu ga Gotoku Kenzan!: native PC port
