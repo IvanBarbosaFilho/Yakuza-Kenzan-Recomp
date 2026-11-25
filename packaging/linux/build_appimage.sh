@@ -19,6 +19,8 @@ echo "== engine, modules, executables"
 cp "$W/build/KenzanRecomp" "$APP/usr/bin/"
 for m in libInfamous2Game.so libInfamous2Game_60.so libInfamous2Game_120.so; do cp "$W/build/$m" "$APP/usr/share/kenzan/"; done
 cp "$W/EBOOT_60.elf" "$W/EBOOT_120.elf" "$APP/usr/share/kenzan/"
+# shaders translated before release (tools/make_shader_seed.py; engine PS3RECOMP_VK_SHADER_SEED)
+[ -f "$W/shader_seed/seed.lst" ] && cp -r "$W/shader_seed" "$APP/usr/share/kenzan/shader_seed"
 SEVEN=$(command -v 7zz); cp "$SEVEN" "$APP/usr/libexec/7zz"
 
 echo "== libraries"

@@ -9,6 +9,8 @@ mod controls;
 mod install;
 mod layout;
 mod shortcut;
+mod update;
+mod import;
 
 use art::*;
 use config::{Choice, Settings};
@@ -24,6 +26,7 @@ enum Tab {
     Performance,
     Controls,
     Install,
+    Mods,
     Log,
 }
 
@@ -52,6 +55,14 @@ struct App {
     capture: Option<usize>,
     capture_mods: egui::Modifiers,
     pads: Vec<String>,
+    /// the update check's answer (a newer release or none), while it runs
+    upd_rx: Option<std::sync::mpsc::Receiver<Option<update::Release>>>,
+    /// a newer release the player has not answered yet
+    upd: Option<update::Release>,
+    /// installing it: progress lines, the last one shown; "ERR: ..." / "DONE" end it
+    upd_job: Option<(std::sync::mpsc::Receiver<String>, String)>,
+    /// earlier installs of the game found around this port (import::find_near), when it has none
+    near: Vec<PathBuf>,
 }
 
 /// The project folder: the first ancestor of the launcher (or of the working directory) with run.sh.
@@ -142,12 +153,119 @@ impl App {
             capture: None,
             capture_mods: egui::Modifiers::default(),
             pads: controls::detected(&lay_log),
+            upd_rx: None,
+            upd: None,
+            upd_job: None,
+            near: vec![],
         };
+        // no game here, but an earlier version of the port has one nearby: offer it (Install tab)
+        if !app.st_game.ok {
+            app.near = import::find_near(&app.lay.data);
+            if !app.near.is_empty() {
+                app.tab = Tab::Install;
+            }
+        }
+        // a newer release on GitHub (the bundles only: a checkout updates with git)
+        if app.lay.app.is_some() {
+            update::cleanup();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let skip = update::skipped(&app.lay.data);
+            std::thread::spawn(move || {
+                let r = update::check().ok().flatten().filter(|r| r.tag != skip);
+                let _ = tx.send(r);
+            });
+            app.upd_rx = Some(rx);
+        }
         app.reload_log();
         if let Some(m) = shortcut::ensure(&app.lay.data) {
             app.flash(&m);
         }
         app
+    }
+
+    /// The "new version" window: Update now / Later / Skip this version, then the install's progress.
+    fn update_window(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.upd_rx {
+            if let Ok(r) = rx.try_recv() {
+                self.upd = r;
+                self.upd_rx = None;
+            }
+        }
+        if let Some((rx, last)) = &mut self.upd_job {
+            while let Ok(m) = rx.try_recv() {
+                *last = m;
+            }
+            if last == "DONE" {
+                std::process::exit(0);
+            }
+        }
+        let Some(r) = self.upd.clone() else { return };
+        if self.game.is_some() {
+            return;
+        }
+        let mut close = false;
+        egui::Window::new(RichText::new("Update available").font(title(22.0)).color(GOLD))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .default_width(520.0)
+            .show(ctx, |ui| {
+                ui.label(RichText::new(format!("{} is out. You have v{}.", if r.name.is_empty() { &r.tag } else { &r.name }, update::current()))
+                    .color(TEXT).size(15.5));
+                ui.label(RichText::new("Your game, saves, settings, controls and mods are kept.").color(MUTED).size(13.5));
+                if !r.notes.is_empty() {
+                    ui.add_space(6.0);
+                    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                        ui.label(RichText::new(&r.notes).color(TEXT).size(13.5));
+                    });
+                }
+                ui.add_space(8.0);
+                if let Some((_, last)) = &self.upd_job {
+                    if let Some(e) = last.strip_prefix("ERR: ") {
+                        ui.label(RichText::new(e).color(Color32::from_rgb(0xE0, 0x70, 0x60)));
+                        ui.horizontal(|ui| {
+                            if ui.button("Try again").clicked() {
+                                self.upd_job = None;
+                            }
+                            if ui.button("Open the releases page").clicked() {
+                                open_url(update::RELEASES);
+                            }
+                            if ui.button("Close").clicked() {
+                                close = true;
+                            }
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(RichText::new(last.as_str()).color(TEXT));
+                        });
+                    }
+                    return;
+                }
+                ui.horizontal(|ui| {
+                    let b = egui::Button::new(RichText::new("Update now").color(Color32::WHITE)).fill(CRIMSON).stroke(Stroke::new(1.0, GOLD));
+                    if ui.add(b).clicked() {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let rel = r.clone();
+                        std::thread::spawn(move || {
+                            let res = update::install(&rel, &tx);
+                            let _ = tx.send(match res { Ok(()) => "DONE".into(), Err(e) => format!("ERR: {e}") });
+                        });
+                        self.upd_job = Some((rx, "Starting the download…".into()));
+                    }
+                    if ui.button("Later").clicked() {
+                        close = true;
+                    }
+                    if ui.button("Skip this version").clicked() {
+                        update::skip(&self.lay.data, &r.tag);
+                        close = true;
+                    }
+                });
+            });
+        if close {
+            self.upd = None;
+            self.upd_job = None;
+        }
     }
 
     fn recheck(&mut self) {
@@ -304,6 +422,7 @@ fn chip(ui: &mut egui::Ui, st: &checks::Status) {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_game();
+        self.update_window(ctx);
         // the embers move: ~30 redraws a second while the window is shown
         ctx.request_repaint_after(Duration::from_millis(33));
         if self.checks_at.map(|t| t.elapsed() > Duration::from_secs(5)).unwrap_or(true) && self.game.is_none() {
@@ -348,6 +467,7 @@ impl eframe::App for App {
                         (Tab::Performance, "Performance"),
                         (Tab::Controls, "Controls"),
                         (Tab::Install, "Install"),
+                        (Tab::Mods, "Mods"),
                         (Tab::Log, "Log"),
                     ] {
                         if tab(ui, name, self.tab == tb).clicked() {
@@ -363,7 +483,9 @@ impl eframe::App for App {
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(if app_bundle() { "v0.1 · Linux · AppImage" } else { "v0.1 · Linux · dev" }).color(MUTED).size(13.0));
+                        ui.label(RichText::new(format!("v{} · {}", update::VERSION,
+                            if cfg!(windows) { "Windows" } else if app_bundle() { "Linux · AppImage" } else { "Linux · dev" }))
+                            .color(MUTED).size(13.0));
                     });
                 });
             });
@@ -420,6 +542,7 @@ impl eframe::App for App {
                     Tab::Performance => ("Performance", "Frame rate and presets for every kind of PC."),
                     Tab::Controls => ("Controls", "Keyboard, mouse and controller. Same file as the Controls page of the in-game menu (F2)."),
                     Tab::Install => ("Install", "Builds the game from your ISO and the community English translation."),
+                    Tab::Mods => ("Mods", "Files that replace the game's while you play. Your game files are never changed."),
                     Tab::Log => ("Log", "The last session. If something goes wrong, send this text."),
                 };
                 ui.horizontal(|ui| {
@@ -461,6 +584,7 @@ impl eframe::App for App {
                         Tab::Performance => performance(ui, &mut self.s),
                         Tab::Controls => controls_tab(ui, self),
                         Tab::Install => install_tab(ui, self),
+                        Tab::Mods => mods_tab(ui, self),
                         Tab::Log => log(ui, self),
                     }
                     ui.add_space(16.0);
@@ -733,6 +857,46 @@ fn install_tab(ui: &mut egui::Ui, app: &mut App) {
             ui.label(RichText::new("The game is already installed. Installing again keeps the current copy as game.old-….").color(MUTED).size(14.0));
         }
     });
+    // already installed by an earlier version of the port: use it instead of installing again
+    if !app.st_game.ok {
+        section(ui, "Already installed?");
+        let mut picked: Option<PathBuf> = None;
+        card(ui, |ui| {
+            if app.near.is_empty() {
+                ui.label(RichText::new("If an earlier version of the port installed the game, point to its folder: \
+                    the game (and its saves, settings and mods) are used as they are, nothing is installed again.")
+                    .color(MUTED).size(14.0));
+            } else {
+                for p in app.near.clone() {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("Found: {}", p.display())).color(TEXT).size(14.5));
+                        if ui.add_enabled(!running, egui::Button::new("Use this one")).clicked() {
+                            picked = Some(p.clone());
+                        }
+                    });
+                }
+                ui.label(RichText::new("Its game, saves, settings and mods are brought here; nothing is installed again.")
+                    .color(MUTED).size(13.5));
+            }
+            ui.add_space(4.0);
+            if ui.add_enabled(!running, egui::Button::new("Use an existing installation…")).clicked() {
+                if let Some(f) = rfd::FileDialog::new().pick_folder() {
+                    picked = Some(f);
+                }
+            }
+        });
+        if let Some(p) = picked {
+            match import::import(&p, &app.lay.data) {
+                Ok(m) => {
+                    app.flash(&m);
+                    app.near.clear();
+                    app.checks_at = None;
+                    app.recheck();
+                }
+                Err(e) => app.flash(&e),
+            }
+        }
+    }
     section(ui, "Files");
     card(ui, |ui| {
         path_row(ui, "Game (ISO or folder)", "Your copy of the BLJM60064 disc: the .iso file, or a folder with PS3_GAME.", &mut app.disc_path, &["iso", "ISO"], !running);
@@ -778,6 +942,157 @@ fn install_tab(ui: &mut egui::Ui, app: &mut App) {
             }
         }
     }
+}
+
+/// One mod folder in the mods folder: on unless its name starts with '_'.
+struct ModEntry {
+    dir: PathBuf,
+    name: String,
+    on: bool,
+    files: usize,
+    note: Option<String>,
+}
+
+fn list_mods(root: &Path) -> Vec<ModEntry> {
+    fn count(d: &Path, note: &mut Option<String>) -> usize {
+        let mut n = 0;
+        if let Ok(rd) = std::fs::read_dir(d) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    n += count(&p, note);
+                } else {
+                    let low = p.file_name().map(|f| f.to_string_lossy().to_lowercase()).unwrap_or_default();
+                    if low.ends_with(".txt") || low.ends_with(".md") {
+                        if note.is_none() {
+                            *note = std::fs::read_to_string(&p).ok().map(|t| t.trim().chars().take(400).collect());
+                        }
+                    } else {
+                        n += 1;
+                    }
+                }
+            }
+        }
+        n
+    }
+    let mut v = vec![];
+    if let Ok(rd) = std::fs::read_dir(root) {
+        for e in rd.flatten() {
+            let p = e.path();
+            let fname = e.file_name().to_string_lossy().to_string();
+            if !p.is_dir() || fname.starts_with('.') {
+                continue;
+            }
+            let mut note = None;
+            let files = count(&p, &mut note);
+            v.push(ModEntry { on: !fname.starts_with('_'), name: fname.trim_start_matches('_').to_string(), dir: p, files, note });
+        }
+    }
+    v.sort_by_key(|m| m.name.to_lowercase());
+    v
+}
+
+/// A mod zip unpacked into its own folder of the mods folder, named after the zip.
+fn add_mod_zip(root: &Path, zip: &Path) -> Result<String, String> {
+    let stem = zip.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "mod".into());
+    let name: String = stem.chars().map(|c| if c.is_alphanumeric() || " _-.()".contains(c) { c } else { '_' }).collect();
+    let name = name.trim_start_matches(['_', '.']).trim().to_string();
+    let dest = root.join(&name);
+    if dest.exists() || root.join(format!("_{name}")).exists() {
+        return Err(format!("\"{name}\" is already in the mods folder."));
+    }
+    let tmp = root.join(format!(".adding-{name}"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    let sz = install::seven_zip()?;
+    let mut c = Command::new(sz);
+    c.arg("x").arg("-y").arg(format!("-o{}", tmp.display())).arg(zip);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let st = c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map_err(|e| e.to_string())?;
+    if !st.success() {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err("The zip could not be unpacked.".into());
+    }
+    // a zip that holds one folder with everything in it: use that folder
+    let inner: Vec<_> = std::fs::read_dir(&tmp).map_err(|e| e.to_string())?.flatten().collect();
+    let src = if inner.len() == 1 && inner[0].path().is_dir() { inner[0].path() } else { tmp.clone() };
+    std::fs::rename(&src, &dest).map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_dir_all(&tmp);
+    Ok(name)
+}
+
+fn mods_tab(ui: &mut egui::Ui, app: &mut App) {
+    let root = app.lay.mods();
+    let _ = std::fs::create_dir_all(&root);
+    ui.label(
+        RichText::new(
+            "Each mod is a folder here. Its files take the place of the game's files with the same name \
+             (or the same path under USRDIR, e.g. bin/shader/sh_iori_ps3.par) every time the game starts. \
+             Nothing is copied over the game, so turning a mod off is enough to undo it.",
+        )
+        .color(MUTED)
+        .size(14.0),
+    );
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        if ui.button("Add mod (.zip)…").clicked() {
+            if let Some(z) = rfd::FileDialog::new().add_filter("Mod archive", &["zip", "7z", "rar"]).pick_file() {
+                match add_mod_zip(&root, &z) {
+                    Ok(n) => app.flash(&format!("Added \"{n}\". It is used the next time the game starts.")),
+                    Err(e) => app.flash(&e),
+                }
+            }
+        }
+        if ui.button("Open mods folder").clicked() {
+            let _ = Command::new(if cfg!(windows) { "explorer" } else { "xdg-open" }).arg(&root).spawn();
+        }
+    });
+    ui.add_space(10.0);
+    let mods = list_mods(&root);
+    if mods.is_empty() {
+        ui.label(RichText::new("No mods yet.").color(MUTED).size(14.5));
+        return;
+    }
+    for m in mods {
+        egui::Frame::new()
+            .fill(FIELD)
+            .stroke(Stroke::new(1.0, LINE))
+            .corner_radius(CornerRadius::same(6))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    let mut on = m.on;
+                    if ui.checkbox(&mut on, RichText::new(&m.name).color(TEXT).size(15.5)).changed() {
+                        let parent = m.dir.parent().unwrap_or(&root).to_path_buf();
+                        let to = parent.join(if on { m.name.clone() } else { format!("_{}", m.name) });
+                        if let Err(e) = std::fs::rename(&m.dir, &to) {
+                            app.flash(&format!("Could not switch it: {e}"));
+                        }
+                    }
+                    ui.label(RichText::new(format!("{} file(s)", m.files)).color(MUTED).size(13.5));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("Open").clicked() {
+                            let _ = Command::new(if cfg!(windows) { "explorer" } else { "xdg-open" }).arg(&m.dir).spawn();
+                        }
+                    });
+                });
+                if let Some(n) = &m.note {
+                    ui.label(RichText::new(n).color(MUTED).size(13.0));
+                }
+            });
+        ui.add_space(6.0);
+    }
+    ui.add_space(4.0);
+    ui.label(
+        RichText::new("Which files a mod changed is written at the top of the Log tab after a session ([mods] lines).")
+            .color(MUTED)
+            .size(13.0),
+    );
 }
 
 fn log(ui: &mut egui::Ui, app: &mut App) {
@@ -858,4 +1173,11 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native("kenzan-launcher", opts, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+}
+
+fn open_url(url: &str) {
+    #[cfg(windows)]
+    let _ = Command::new("explorer").arg(url).spawn();
+    #[cfg(not(windows))]
+    let _ = Command::new("xdg-open").arg(url).spawn();
 }

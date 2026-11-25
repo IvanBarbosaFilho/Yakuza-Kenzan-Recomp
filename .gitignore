@@ -1,4 +1,4 @@
-game
+/game
 work
 port/recompiled
 port/spu
@@ -14,3 +14,4 @@ kenzan.ini
 input.toml
 # debug scratch (decompiled game shaders)
 tools/vpdiff
+/mods/

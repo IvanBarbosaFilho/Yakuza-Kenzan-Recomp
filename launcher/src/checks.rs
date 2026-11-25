@@ -31,7 +31,12 @@ fn sha1_file(p: &Path) -> Option<String> {
 }
 
 pub fn game(root: &Path) -> Status {
-    let eboot = root.join("game/PS3_GAME/USRDIR/EBOOT.elf");
+    game_at(&crate::import::game_dir(root))
+}
+
+/// The game folder `game` (the one holding PS3_GAME): its EBOOT, a version this port runs?
+pub fn game_at(game: &Path) -> Status {
+    let eboot = game.join("PS3_GAME/USRDIR/EBOOT.elf");
     if !eboot.exists() {
         return Status { ok: false, text: "Game not found (game/PS3_GAME)".into() };
     }

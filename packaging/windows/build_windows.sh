@@ -25,7 +25,7 @@ if has engine; then
     -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded -DPS3RECOMP_DIR='$D/engine' -DPS3RECOMP_RSX_VULKAN=ON \
     -DPS3RECOMP_BUILD_TESTS=OFF -DPS3RECOMP_RL_ACHIEVEMENTS=OFF -DPS3RECOMP_VULKAN_INCLUDE_DIR='$VH/include' \
     -DPS3RECOMP_SDL2_INCLUDE_PARENT='$WIN/sdl2-inc' -DSDL2_DIR='$WIN/sdl2/SDL2-2.32.10/cmake' \
-    -Dglslang_DIR='$WIN/glslang-install/lib/cmake/glslang' -DPS3RECOMP_REQUIRE_GUEST_PROGRAMS=ON \
+    -Dglslang_DIR='$WIN/glslang-install-opt/lib/cmake/glslang' -DCMAKE_PREFIX_PATH='$WIN/glslang-install-opt' -DPS3RECOMP_REQUIRE_GUEST_PROGRAMS=ON \
     '-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Z7' '-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG' \
     '-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/INCREMENTAL:NO /DEBUG /OPT:REF /OPT:ICF' > '$WIN/engine-cfg.log' 2>&1 \
     && nice -n 19 ninja -C '$WIN/build-engine' -j '${JOBS:-10}' KenzanRecomp > '$WIN/engine-build.log' 2>&1" \
@@ -66,9 +66,12 @@ if has package; then
   cp "$WIN/m60/Infamous2Game.dll" "$OUT/engine/KenzanGame_60.dll"
   cp "$WIN/m120/Infamous2Game.dll" "$OUT/engine/KenzanGame_120.dll"
   cp "$D/work/EBOOT_60.elf" "$D/work/EBOOT_120.elf" "$OUT/engine/"
+  # shaders translated before release (tools/make_shader_seed.py; engine PS3RECOMP_VK_SHADER_SEED)
+  [ -f "$D/work/shader_seed/seed.lst" ] && cp -r "$D/work/shader_seed" "$OUT/engine/shader_seed"
   cp "$WIN/7zip/7z.exe" "$WIN/7zip/7z.dll" "$OUT/engine/"
   cp "$WIN/7zip/License.txt" "$OUT/licenses/7-Zip-License.txt"
   cp "$WIN/sdl2/SDL2-2.32.10/LICENSE.txt" "$OUT/licenses/SDL2-License.txt"
   cp "$D/launcher/assets/OFL-ShipporiMincho.txt" "$OUT/licenses/"
+  cp "$D/README.md" "$OUT/README.md"
   du -sh "$OUT"
 fi

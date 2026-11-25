@@ -63,6 +63,7 @@ extern "C" const char* ppu_vfs_root = ".";
 /* PS3_GAME_MODS_DIR: mods in the inFAMOUS Mod Manager's format, served as the
  * loose files the game falls back to (see the header). */
 #include "ppu_fs_mods.h"
+#include "ppu_fs_loose_mods.h"   /* the Yakuza titles' replacement-file mods */
 
 /* CELL_FS return / mode / flag constants. */
 #define CELL_OK              0
@@ -185,6 +186,7 @@ static void host_path(char* out, size_t cap, const char* guest, bool mods_ok = f
      * stat): a write, mkdir or opendir of that name must never reach the
      * user's mod file or the build cache */
     if (mods_ok) gmods::redirect(guest, out, cap);
+    if (mods_ok) loosemods::redirect(guest, out, cap);
 }
 
 /* ---- fd / dir handle tables ---- */

@@ -519,7 +519,7 @@ static int settings_save(void)
     mkdirs_for(s_ini_path);
     FILE* f = fopen(tmp, "w");
     if (!f) return 0;
-    fprintf(f, "# inFAMOUS 2 port -- settings of the in-game menu (F2, or hold L3+R3).\n"
+    fprintf(f, "# PC port -- settings of the in-game menu (F2, or hold L3+R3).\n"
                "# Same names and values as the environment variables; a variable that is\n"
                "# set when the game starts wins over its line here.\n");
     {

@@ -71,7 +71,7 @@ impl Layout {
     }
 
     pub fn game(&self) -> PathBuf {
-        self.data.join("game")
+        crate::import::game_dir(&self.data)
     }
 
     /// The module and the executable to boot for a frame rate (30 = the shipped game).
@@ -86,6 +86,12 @@ impl Layout {
             "60" => (self.modules.join(m60), ebootdir.join("EBOOT_60.elf")),
             _ => (self.modules.join(m30), self.game().join("PS3_GAME/USRDIR/EBOOT.elf")),
         }
+    }
+
+    /// The mods folder: one folder per mod, whose files replace the game's while playing
+    /// (engine runtime/ppu/ppu_fs_loose_mods.h); the game's own files are never changed.
+    pub fn mods(&self) -> PathBuf {
+        self.data.join("mods")
     }
 
     /// The controls file (input.toml), shared with the in-game menu's Controls page.
@@ -109,6 +115,8 @@ impl Layout {
             // the launcher runs inside its own nix-shell (GUI libraries only): run.sh must enter the
             // game's shell.nix itself, so it must not see this one as "already in a nix-shell"
             cmd.env_remove("IN_NIX_SHELL").env_remove("LD_LIBRARY_PATH");
+            let _ = fs::create_dir_all(self.mods());
+            cmd.env("PS3_LOOSE_MODS_DIR", self.mods());
             for (k, v) in env {
                 cmd.env(k, v);
             }
@@ -179,7 +187,19 @@ impl Layout {
             ("KZ_INI", p(&self.data.join("kenzan.ini"))),
             ("PS3_INPUT_MAP", p(&self.input_file())),
             ("KZ_FPS", fps.to_string()),
+            ("PS3_LOOSE_MODS_DIR", p(&self.mods())),
+            // the in-game menu's About / Update / Display pages (engine vk_overlay_menu.inc)
+            ("PS3_PORT_NAME", "Ryu ga Gotoku Kenzan! PC port".into()),
+            ("PS3_PORT_BY", "by IvanBarbosaFilho".into()),
+            ("PS3_PORT_URL", "https://github.com/IvanBarbosaFilho/Yakuza-Kenzan-Recomp".into()),
+            ("PS3_PORT_VERSION", format!("v{}", env!("CARGO_PKG_VERSION"))),
+            ("PS3_UPDATE_BY", "launcher".into()),
+            ("PS3_ASPECT_UNSUPPORTED", "1".into()),
+            // shaders translated before release (engine vk_sc_seed_import): made by
+            // tools/make_shader_seed.py, shipped beside the game modules
+            ("PS3RECOMP_VK_SHADER_SEED", p(&self.modules.join("shader_seed"))),
         ];
+        let _ = fs::create_dir_all(self.mods());
         for (k, v) in fixed {
             cmd.env(k, v);
         }

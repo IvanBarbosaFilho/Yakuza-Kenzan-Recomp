@@ -2784,6 +2784,50 @@ static void vk_sc_tick(void)
     vk_sc_maybe_stats("idle");
 }
 
+/* (Kenzan) PS3RECOMP_VK_SHADER_SEED=<dir>: shaders translated before release, shipped with the
+ * port. <dir>/seed.lst names them (one <key>.spv per line, the first line the seed's id);
+ * each one this cache lacks is copied in, once per seed id (<cache>/seed-imported holds it).
+ * <dir>/pipelines.rcp is merged into this run's recipes at every start (vk_pw_load), so the
+ * first session already builds those pipelines at the title screen. The .spv keys hold the
+ * translator fingerprint: a seed made by another glslang is simply never hit. */
+static void vk_sc_seed_import(void)
+{
+    const char* seed = getenv("PS3RECOMP_VK_SHADER_SEED");
+    if (!seed || !*seed) return;
+    char lst[VK_SC_PATH], mark[VK_SC_PATH];
+    if (vk_sc_join(lst, sizeof lst, seed, "seed.lst") || vk_sc_join(mark, sizeof mark, s_sc.dir, "seed-imported"))
+        return;
+    size_t n = 0, mn = 0;
+    char* text = (char*)vk_sc_read_all(lst, &n);
+    if (!text) { VK_LOG("shader cache: seed %s has no seed.lst\n", seed); return; }
+    char* t2 = (char*)realloc(text, n + 1); if (!t2) { free(text); return; } text = t2; text[n] = 0;
+    char* line = text; char* nl = strchr(line, '\n'); if (nl) *nl = 0;
+    char id[128]; snprintf(id, sizeof id, "%s", line); { size_t k = strlen(id); while (k && (id[k-1] == '\r' || id[k-1] == ' ')) id[--k] = 0; }
+    char* have = (char*)vk_sc_read_all(mark, &mn);
+    const int done = have && mn == strlen(id) && memcmp(have, id, mn) == 0;
+    free(have);
+    if (done) { free(text); return; }
+    unsigned copied = 0, present = 0, bad = 0;
+    for (char* l = nl ? nl + 1 : NULL; l && *l; ) {
+        char* e = strchr(l, '\n'); if (e) *e = 0;
+        size_t k = strlen(l); while (k && (l[k-1] == '\r' || l[k-1] == ' ')) l[--k] = 0;
+        if (k > 4 && !strchr(l, '/') && !strchr(l, '\\')) {
+            char src[VK_SC_PATH], dst[VK_SC_PATH]; struct stat st;
+            if (!vk_sc_join(src, sizeof src, seed, l) && !vk_sc_join(dst, sizeof dst, s_sc.dir, l)) {
+                if (stat(dst, &st) == 0) present++;
+                else { size_t sz = 0; u8* b = vk_sc_read_all(src, &sz);
+                       if (b && sz && !vk_sc_write_file(dst, NULL, 0, b, sz)) copied++; else bad++;
+                       free(b); }
+            }
+        }
+        l = e ? e + 1 : NULL;
+    }
+    free(text);
+    if (!bad) vk_sc_write_file(mark, NULL, 0, id, strlen(id));
+    VK_LOG("shader cache: seed \"%s\": %u shader(s) copied in, %u already here%s\n", id, copied, present,
+           bad ? " (some could not be copied: tried again next start)" : "");
+}
+
 /* After device creation: choose and create the directory, and create the
  * pipeline cache from pipelines.bin when it belongs to this device. */
 static void vk_sc_open(const char* title)
@@ -2805,6 +2849,7 @@ static void vk_sc_open(const char* title)
         return;
     }
     s_sc.on = 1;
+    vk_sc_seed_import();
 
     VkPhysicalDeviceProperties p;
     pvkGetPhysicalDeviceProperties(s_vk.phys, &p);

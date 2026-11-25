@@ -47,6 +47,17 @@ The install copies the disc and applies the translation into the port's own fold
 against the executable the port was recompiled from, before it replaces anything. It needs about 23 GB of free
 space and takes a few minutes. Your disc image and the patch file are only read, never changed.
 
+**Already installed it with an earlier version?** Do not install again: the **Install** tab finds an earlier
+version of the port in the folders around the new one (or press **Use an existing installation…** and pick its
+folder). Its game is moved over, with its saves, settings, controls and mods; nothing is installed again.
+
+### Updates
+
+From v1.0.1 on, the launcher checks GitHub for a newer release when it starts and asks before it changes
+anything: **Update now** downloads it, checks it, replaces the port's own files and starts the new version
+(your game, saves, settings, controls and mods are kept); **Later** asks again next time; **Skip this version**
+does not ask about that one again. If you are on v1.0.0, download v1.0.1 by hand once.
+
 ## What you need
 
 - **Ryu ga Gotoku Kenzan!**, the Japanese PS3 disc **BLJM60064** (v1.00), as a decrypted disc image (`.iso`)
@@ -66,6 +77,9 @@ space and takes a few minutes. Your disc image and the patch file are only read,
 - **Any controller, plug and play,** or keyboard and mouse; every button can be remapped.
 - **An in-game settings menu,** a frame-rate counter and the original PS3 look on a key.
 - **Saves** in the port's folder, in the PS3's own format.
+- **Mods:** the launcher's **Mods** tab adds mod `.zip` files and turns them on or off (see [Mods](#mods)).
+- **Shaders ready from the first start:** the release ships the game's shaders already translated, so the first
+  session does not stutter while they are built.
 
 ### Keys
 
@@ -96,6 +110,20 @@ and no Visual C++ runtime is needed. Settings (`kenzan.ini`, `input.toml`), the 
 and logs (`work\`) live in the same folder: move or copy the folder and it still plays. To uninstall, delete it.
 
 The programs are not code-signed, so Windows SmartScreen may warn the first time: **More info → Run anyway**.
+
+## Mods
+
+Kenzan's community mods are files that take the place of the game's own (for example `sh_iori_ps3.par` in
+`bin/shader`, or `mail.bin` in `bin/scenario`). Here they are never copied over the game:
+
+1. In the launcher, **Mods → Add mod (.zip)…** and pick the mod's zip. It becomes a folder in the port's `mods`
+   folder (**Open mods folder**), one folder per mod.
+2. Untick a mod to turn it off. That is all it takes to undo it.
+
+A file in a mod's folder replaces the game file with the same path under `USRDIR`, or, if it sits alone at the
+top of the mod (as most of these zips have it), the one game file with that name. The **Log** tab lists what each
+mod replaced (`[mods]` lines). Two mods that change the same file: the first one (by name) wins, and the log
+says so.
 
 ## FAQ
 

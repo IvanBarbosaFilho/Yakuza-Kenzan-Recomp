@@ -326,6 +326,32 @@ static void vk_pw_load(void)
     free(f);
     if (why) VK_LOG("pipelines: recipes %s (%s)\n", why, path);
     else     VK_LOG("pipelines: %u recipes from %s (run %u)\n", s_pw.nrec, path, s_pw.run);
+    /* (Kenzan) the release's recipes (PS3RECOMP_VK_SHADER_SEED, rsx_vulkan_backend.c
+     * vk_sc_seed_import): merged at every start as if this run had asked for them, so they
+     * never age out of a player's file before the player reaches that part of the game. */
+    const char* seed = getenv("PS3RECOMP_VK_SHADER_SEED");
+    char sp[VK_SC_PATH];
+    if (seed && *seed && !vk_sc_join(sp, sizeof sp, seed, "pipelines.rcp")) {
+        size_t ss = 0;
+        u8* g = vk_sc_read_all(sp, &ss);
+        if (g && ss >= VK_PW_HEADER && memcmp(g, VK_PW_MAGIC, 8) == 0 &&
+            vk_sc_le32(g + 8) == VK_PW_VERSION && vk_sc_le32(g + 12) == (u32)sizeof(vk_pw_rec) &&
+            vk_sc_le32(g + 16) == (u32)sizeof(rsx_be_render_state) &&
+            (ss - VK_PW_HEADER) == (size_t)vk_sc_le32(g + 20) * sizeof(vk_pw_rec)) {
+            const u32 n = vk_sc_le32(g + 20), before = s_pw.nrec;
+            vk_pw_lock();
+            for (u32 i = 0; i < n; i++) {
+                vk_pw_rec r;
+                memcpy(&r, g + VK_PW_HEADER + (size_t)i * sizeof r, sizeof r);
+                r.last_run = s_pw.run;
+                vk_pw_add_locked(&r, vk_pw_hash(&r), 0);
+            }
+            if (s_pw.nrec != before) s_pw.dirty = 1;
+            vk_pw_unlock();
+            VK_LOG("pipelines: seed recipes %u, %u new to this cache\n", n, s_pw.nrec - before);
+        } else if (g) VK_LOG("pipelines: seed recipes %s: another version, not used\n", sp);
+        free(g);
+    }
 }
 
 /* The recipes used in the last VK_PW_KEEP_RUNS runs, through a temporary file. */

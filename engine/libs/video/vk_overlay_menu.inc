@@ -405,6 +405,11 @@ static void page_display(Rows& R)
         .d("Borderless. Also Alt+Enter or F11.").c(0).live(V_FULLSCREEN);
     mrow_toggle(R, "capture", "Capture-friendly window", s_ui.capture, [](bool on) { s_ui.capture = on; apply_setting(V_CAPTURE, on ? "1" : "0"); })
         .d("Lets Lossless Scaling and OBS grab the game.").c(0).live(V_CAPTURE);
+    /* (Kenzan) PS3_ASPECT_UNSUPPORTED=1: the title has no aspect patch in this build (the backend
+     * would stay 16:9 whatever is picked), so the row says so instead of offering choices. */
+    if (getenv("PS3_ASPECT_UNSUPPORTED")) {
+        mrow_info(R, "aspect", "Aspect ratio", "16:9").d("Other screen shapes are not available for this game yet.");
+    } else
     { MRow& r = mrow_choice(R, "aspect", "Aspect ratio", vs({ "16:9", "Auto", "21:9", "32:9", "16:10" }), s_ui.aspect,
                             [](int i) { s_ui.aspect = i; apply_setting(V_ASPECT, kAspect[i]); });
       if (s_ui.aspect < 0) { const char* e = getenv(kVar[V_ASPECT]); r.vtext = e ? e : "?"; }
@@ -422,7 +427,7 @@ static void page_display(Rows& R)
       const double hh = 2.0 * atan(tan(vv * 0.5) * (16.0 / 9.0) * (double)vk_postfx_aspect_k());
       r.st(have ? sfmt("The free camera now sees %.0f\xC2\xB0 across, %.0f\xC2\xB0 up and down.", hh * 57.29578, vv * 57.29578)
                 : std::string("Not in this build (its lift has no camera hooks)."), !have); }
-    mrow_choice(R, "theme", "Menu theme", vs({ "Hero", "Infamous" }), vk_ov_theme_red(),
+    mrow_choice(R, "theme", "Menu theme", vs({ "Blue", "Red" }), vk_ov_theme_red(),
                 [](int i) { apply_setting(V_THEME, i ? "infamous" : "hero"); })
         .d("Blue or red menu colours.").c(0).live(V_THEME);
 }
@@ -719,6 +724,13 @@ static std::string first_line(const char* s, size_t max = 160)
 
 static void page_mods(Rows& R)
 {
+    /* (Kenzan) replacement-file mods (runtime/ppu/ppu_fs_loose_mods.h), managed by the launcher */
+    if (const char* ld = getenv("PS3_LOOSE_MODS_DIR")) {
+        mrow_info(R, "mods", "Mods", "").d("Add mods and turn them on or off in the launcher's Mods tab. "
+                                            "They apply the next time the game starts.");
+        mrow_info(R, "folder", "Mods folder", "").st(std::string(ld));
+        return;
+    }
     const char* dir = ps3_game_mods_dir();
     const bool have = dir && *dir;
     if (!s_census) zip_result_poll();
@@ -863,9 +875,10 @@ static void page_update(Rows& R)
     if (!s_upd_dir[0] && !s_census) {
         const char* by = getenv("PS3_UPDATE_BY");
         MRow& r = mrow_action(R, "check", "Updates", "Check now", [] {});
-        r.off(true).d(by && !strcmp(by, "recomplauncher") ? "RecompLauncher installs each new release by itself."
+        r.off(true).d(by && !strcmp(by, "launcher") ? "The launcher checks for a new version each time it starts."
+                      : by && !strcmp(by, "recomplauncher") ? "RecompLauncher installs each new release by itself."
                       : by && !strcmp(by, "git") ? "A git clone: \"git pull\", then Setup.exe builds it."
-                      : "Start the game with \"Play inFAMOUS 2\" from a Setup folder to get updates here.");
+                      : "Updates come with the port's launcher.");
         return;
     }
     static UpdateStatus v;
@@ -994,10 +1007,15 @@ static void page_about(Rows& R)
     char ver[96] = "";
     { std::lock_guard<std::mutex> g(s_upd_lock);
       if (s_upd_have) snprintf(ver, sizeof ver, "%s", s_upd.installed); }
-    mrow_info(R, "port", "inFAMOUS 2 PC port", ver);
-    mrow_info(R, "by", "by Sami Enazi");
-    mrow_action(R, "page", "Project page", "Open", [] { about_open_url(ABOUT_PROJECT_URL); })
-        .d("Opens in your browser.").st(std::string(ABOUT_PROJECT_URL).substr(8));
+    { const char* pv = getenv("PS3_PORT_VERSION"); if (pv && *pv) snprintf(ver, sizeof ver, "%s", pv); }
+    { const char* pn = getenv("PS3_PORT_NAME"); const char* pb = getenv("PS3_PORT_BY");
+      mrow_info(R, "port", pn && *pn ? pn : "inFAMOUS 2 PC port", ver);
+      if (pb && *pb) { mrow_info(R, "by", pb);
+                       mrow_info(R, "engine", "Engine: the inFAMOUS 2 port by Sami Enazi, on ps3recomp"); }
+      else mrow_info(R, "by", "by Sami Enazi"); }
+    { static std::string url; { const char* u = getenv("PS3_PORT_URL"); url = u && *u ? u : ABOUT_PROJECT_URL; }
+      mrow_action(R, "page", "Project page", "Open", [] { about_open_url(url.c_str()); })
+          .d("Opens in your browser.").st(url.size() > 8 ? url.substr(8) : url); }
     if (!f.support_url.empty()) {
         const std::string url = f.support_url;
         mrow_action(R, "support", "Support the developer", "Open", [url] { about_open_url(url); })

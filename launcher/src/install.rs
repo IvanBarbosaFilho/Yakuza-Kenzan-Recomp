@@ -48,7 +48,7 @@ fn frac(p: &Shared, f: f32) {
 }
 
 /// 7-Zip's command-line program, from PATH.
-fn seven_zip() -> Result<String, String> {
+pub fn seven_zip() -> Result<String, String> {
     // Windows: the 7-Zip shipped in engine/ (7z.exe + 7z.dll), then an installed one
     #[cfg(windows)]
     {
@@ -407,6 +407,7 @@ fn install(root: &Path, disc: &Path, patch: &Path, p: &Shared) -> Result<(), Str
         }
     }
     fs::rename(&stage, &game).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(root.join("game_location.txt"));   // a game used from elsewhere until now
     if patch_tmp.exists() {
         let _ = fs::remove_dir_all(&patch_tmp);
     }

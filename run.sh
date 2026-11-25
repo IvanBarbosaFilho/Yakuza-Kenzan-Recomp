@@ -19,6 +19,12 @@ if [ -z "${KZ_FPS:-}" ] && [ -f "$KZ_INI" ]; then KZ_FPS=$(sed -n 's/^fps=\([0-9
 export KZ_FPS=${KZ_FPS:-60}
 # the controls (input.toml: the launcher's Controls tab and the in-game F2 > Controls both edit it)
 export PS3_INPUT_MAP=${PS3_INPUT_MAP-$D/input.toml}
+# mods: one folder per mod in mods/, its files read in place of the game's (engine ppu_fs_loose_mods.h)
+export PS3_LOOSE_MODS_DIR=${PS3_LOOSE_MODS_DIR-$D/mods}; mkdir -p "$PS3_LOOSE_MODS_DIR"
+# the in-game menu: About / Update / Display (engine vk_overlay_menu.inc); no aspect patch in this build
+export PS3_PORT_NAME=${PS3_PORT_NAME-"Ryu ga Gotoku Kenzan! PC port"} PS3_PORT_BY=${PS3_PORT_BY-"by IvanBarbosaFilho"}
+export PS3_PORT_URL=${PS3_PORT_URL-https://github.com/IvanBarbosaFilho/Yakuza-Kenzan-Recomp} PS3_UPDATE_BY=${PS3_UPDATE_BY-git}
+export PS3_ASPECT_UNSUPPORTED=${PS3_ASPECT_UNSUPPORTED-1}
 # KZ_FPS=60 (default): the community 60 FPS patch (RPCS3 patch.yml "Framerate - Core: 60 FPS", Pakundo)
 # applied to the EBOOT (tools/apply_rpcs3_patch.py -> work/EBOOT_60.elf) and lifted into its own module.
 # KZ_FPS=30: the game as shipped.
