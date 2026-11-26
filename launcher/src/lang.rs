@@ -159,6 +159,7 @@ impl Moves {
 pub fn convert(data: PathBuf, disc: PathBuf, p: Shared) {
     let r = convert_inner(&data, &disc, &p);
     finish(&p, r);
+    install::save_log(&data, &p, None);
 }
 
 fn convert_inner(data: &Path, disc: &Path, p: &Shared) -> Result<String, String> {
@@ -282,6 +283,7 @@ pub fn add_translation(data: PathBuf, patch: PathBuf, p: Shared) {
         Ok("The English translation is installed.".into())
     })();
     finish(&p, r);
+    install::save_log(&data, &p, None);
 }
 
 #[cfg(test)]
@@ -300,7 +302,7 @@ mod tests {
     fn split_install_convert_recover() {
         let (Ok(jp), Ok(patch), Ok(t)) =
             (std::env::var("KZ_TEST_GAME_JP"), std::env::var("KZ_TEST_PATCH"), std::env::var("KZ_TEST_DIR")) else { return };
-        let (jp, patch, t) = (PathBuf::from(jp), PathBuf::from(patch), PathBuf::from(t));
+        let (jp, patch, t) = (PathBuf::from(jp), PathBuf::from(patch), PathBuf::from(t).join("split"));   // its own folder
         let _ = fs::remove_dir_all(&t);
         let p: Shared = Arc::new(Mutex::new(Default::default()));
         let probe = "bin/scenario/scenario.bin";

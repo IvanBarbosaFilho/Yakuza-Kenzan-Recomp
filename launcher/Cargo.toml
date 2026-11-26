@@ -1,6 +1,6 @@
 [package]
 name = "kenzan-launcher"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 description = "Launcher and settings for the Ryu ga Gotoku Kenzan! PC port"
 

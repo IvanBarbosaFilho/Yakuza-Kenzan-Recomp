@@ -1297,6 +1297,40 @@ fn main() -> eframe::Result {
         println!("game exited: {st}");
         std::process::exit(if st.success() { 0 } else { 1 });
     }
+    if a.len() == 2 && a[1] == "--self-update" {
+        // the Update button's own path, without the window (tests: under Wine for the Windows
+        // half): KZ_UPDATE_AS=<older version> to be offered the current release, KZ_UPDATE_NO_START=1
+        // not to start the new launcher afterwards. Also written to work/logs/self-update.txt (the
+        // Windows launcher has no console).
+        let lay = layout::Layout::detect(find_root());
+        let logf = lay.work.join("logs").join("self-update.txt");
+        let _ = std::fs::create_dir_all(logf.parent().unwrap());
+        let _ = std::fs::write(&logf, "");
+        let log = |m: &str| {
+            println!("{m}");
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&logf) { let _ = writeln!(f, "{m}"); }
+        };
+        let japanese = lang::jp_ready(&lay);
+        log(&format!("launcher v{} (acting as v{}), {} edition, asset {}", update::VERSION, update::current(),
+                     if japanese { "Japanese" } else { "normal" }, update::asset(japanese)));
+        let r = match update::check(japanese) {
+            Ok(Some(r)) => r,
+            Ok(None) => { log("no newer release"); return Ok(()); }
+            Err(e) => { log(&format!("check failed: {e}")); std::process::exit(1); }
+        };
+        log(&format!("found {} ({} bytes, sha256 {})", r.tag, r.size, if r.sha256.is_empty() { "none" } else { &r.sha256 }));
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        let t = std::thread::spawn(move || update::install(&r, &tx));
+        let mut last = String::new();
+        for m in rx { if m != last { log(&format!("  {m}")); last = m; } }
+        match t.join() {
+            Ok(Ok(())) => log("update installed"),
+            Ok(Err(e)) => { log(&format!("update failed: {e}")); std::process::exit(1); }
+            Err(_) => { log("update thread panicked"); std::process::exit(1); }
+        }
+        return Ok(());
+    }
     if a.len() == 4 && a[1] == "--install" {
         let p: install::Shared = Default::default();
         let root = layout::Layout::detect(find_root()).data;

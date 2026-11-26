@@ -79,15 +79,21 @@ pub fn current() -> String {
 /// The latest release, when it is newer than this launcher and has a file for this system.
 pub fn check(japanese: bool) -> Result<Option<Release>, String> {
     let name = asset(japanese);
-    let out = curl()
-        .args(["--max-time", "15", "-H", "Accept: application/vnd.github+json", API])
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("curl: {e}"))?;
-    if !out.status.success() {
-        return Err("GitHub did not answer".into());
-    }
-    let j: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    // KZ_UPDATE_RELEASE_JSON=<file> (tests): the API's answer read from a file, not asked for
+    let body = if let Ok(f) = std::env::var("KZ_UPDATE_RELEASE_JSON") {
+        std::fs::read(&f).map_err(|e| format!("{f}: {e}"))?
+    } else {
+        let out = curl()
+            .args(["--max-time", "15", "-H", "Accept: application/vnd.github+json", API])
+            .stderr(Stdio::null())
+            .output()
+            .map_err(|e| format!("curl: {e}"))?;
+        if !out.status.success() {
+            return Err("GitHub did not answer".into());
+        }
+        out.stdout
+    };
+    let j: serde_json::Value = serde_json::from_slice(&body).map_err(|e| e.to_string())?;
     let tag = j["tag_name"].as_str().unwrap_or("").to_string();
     if j["draft"].as_bool() == Some(true) || j["prerelease"].as_bool() == Some(true) || !newer(&tag, &current()) {
         return Ok(None);
@@ -124,6 +130,14 @@ fn sha256_file(p: &Path) -> Result<String, String> {
 /// Download `r` into `dest`, reporting "Downloading… N%" through `tx`.
 fn download(r: &Release, dest: &Path, tx: &Sender<String>) -> Result<(), String> {
     let _ = std::fs::remove_file(dest);
+    // KZ_UPDATE_LOCAL_DIR=<dir> (tests): the release file taken from that folder (by the name at the
+    // end of its URL) instead of downloaded; the SHA-256 check below still runs
+    if let Ok(dir) = std::env::var("KZ_UPDATE_LOCAL_DIR") {
+        let file = r.url.rsplit('/').next().unwrap_or("");
+        let src = Path::new(&dir).join(file);
+        let _ = tx.send(format!("Copying {} (local test)…", src.display()));
+        std::fs::copy(&src, dest).map_err(|e| format!("{}: {e}", src.display()))?;
+    } else {
     let mut child = curl()
         .args(["--retry", "2", "-o"])
         .arg(dest)
@@ -146,6 +160,7 @@ fn download(r: &Release, dest: &Path, tx: &Sender<String>) -> Result<(), String>
         };
         let _ = tx.send(msg);
         std::thread::sleep(std::time::Duration::from_millis(400));
+    }
     }
     if !r.sha256.is_empty() {
         let _ = tx.send("Checking the download…".into());
@@ -239,7 +254,9 @@ pub fn install(r: &Release, tx: &Sender<String>) -> Result<(), String> {
         let _ = std::fs::remove_dir_all(&stage);
         let _ = std::fs::remove_file(&zip);
         let _ = tx.send("Starting the new version…".into());
-        Command::new(&dst_exe).current_dir(&root).spawn().map_err(|e| e.to_string())?;
+        if std::env::var_os("KZ_UPDATE_NO_START").is_none() {
+            Command::new(&dst_exe).current_dir(&root).spawn().map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 }

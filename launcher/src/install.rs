@@ -276,6 +276,7 @@ fn sha1_hex(d: &[u8]) -> String {
 /// `patch` None: the Japanese original, no translation.
 pub fn run(root: PathBuf, disc: PathBuf, patch: Option<PathBuf>, p: Shared) {
     let r = install(&root, &disc, patch.as_deref(), &p);
+    save_log(&root, &p, r.as_ref().err());
     if let Ok(mut g) = p.lock() {
         g.done = true;
         match r {
@@ -290,6 +291,24 @@ pub fn run(root: PathBuf, disc: PathBuf, patch: Option<PathBuf>, p: Shared) {
                 g.error = Some(e);
             }
         }
+    }
+}
+
+/// The install's progress lines, kept in work/logs/install.txt for a bug report (the window
+/// is gone once the launcher closes). Also used by the language jobs (lang.rs).
+pub(crate) fn save_log(root: &Path, p: &Shared, err: Option<&String>) {
+    let dir = root.join("work").join("logs");
+    let _ = fs::create_dir_all(&dir);
+    if let Ok(g) = p.lock() {
+        let mut t = format!("Kenzan launcher v{}\n", env!("CARGO_PKG_VERSION"));
+        for l in &g.log {
+            t.push_str(l);
+            t.push('\n');
+        }
+        if let Some(e) = err {
+            t.push_str(&format!("ERROR: {e}\n"));
+        }
+        let _ = fs::write(dir.join("install.txt"), t);
     }
 }
 
@@ -314,10 +333,12 @@ pub(crate) fn make_translation(patch: &Path, tmp: &Path, tr_new: &Path, p: &Shar
         find_patch_root(tmp, 3).ok_or("the translation archive has no USRDIR and PARAM.SFO")?
     };
     set(p, "Preparing the translation…", 0.89);
-    let rpcs3_eboot = proot.join("USRDIR/EBOOT RPCS3.BIN");
-    if !rpcs3_eboot.is_file() {
-        return Err("the translation has no \"EBOOT RPCS3.BIN\"".into());
-    }
+    // The executable the port runs in English, found by its CONTENTS: the patch ships two
+    // ("EBOOT.BIN" for a console, "EBOOT RPCS3.BIN" for the emulator), and its "Extra Steps
+    // (RPCS3 Only)" rename them (EBOOT.BIN -> "EBOOT PS3.BIN", "EBOOT RPCS3.BIN" -> EBOOT.BIN), so
+    // a folder prepared for RPCS3 has the right one under another name. Every EBOOT*.BIN is
+    // unwrapped and the one with the expected SHA-1 is taken, the RPCS3-named ones first.
+    let elf = pick_translation_eboot(&proot.join("USRDIR"), p)?;
     let usr = tr_new.join("USRDIR");
     link_or_copy(&proot.join("USRDIR"), &usr)?;
     fs::copy(proot.join("PARAM.SFO"), tr_new.join("PARAM.SFO")).map_err(|e| e.to_string())?;
@@ -325,24 +346,57 @@ pub(crate) fn make_translation(patch: &Path, tmp: &Path, tr_new: &Path, p: &Shar
     count_files(&usr, &mut n);
     note(p, format!("{n} translation files"));
 
-    // the executable the port runs in English
     set(p, "Preparing the executable…", 0.93);
-    let selfd = fs::read(usr.join("EBOOT RPCS3.BIN")).map_err(|e| e.to_string())?;
-    let elf = unfself(&selfd)?;
-    let h = sha1_hex(&elf);
-    note(p, format!("EBOOT.elf SHA-1 {h}"));
-    if h != EN_EBOOT_SHA1 {
-        return Err(format!(
-            "the resulting executable is not the expected one ({}…). A different translation version?",
-            &h[..12]
-        ));
+    // the translation's own EBOOT*.BIN are of no use to the port (the engine never reads them)
+    for e in fs::read_dir(&usr).into_iter().flatten().flatten() {
+        let n = e.file_name().to_string_lossy().to_lowercase();
+        if n.starts_with("eboot") && n.ends_with(".bin") {
+            let _ = fs::remove_file(e.path());
+        }
     }
     fs::write(usr.join("EBOOT.elf"), &elf).map_err(|e| e.to_string())?;
-    let _ = fs::remove_file(usr.join("EBOOT RPCS3.BIN"));
     if tmp.exists() {
         let _ = fs::remove_dir_all(tmp);
     }
     Ok(n)
+}
+
+/// The translation's EBOOT*.BIN that unwraps to the executable the port was recompiled from.
+fn pick_translation_eboot(usrdir: &Path, p: &Shared) -> Result<Vec<u8>, String> {
+    let mut cands: Vec<PathBuf> = fs::read_dir(usrdir)
+        .map_err(|e| format!("{}: {e}", usrdir.display()))?
+        .flatten()
+        .map(|e| e.path())
+        .filter(|f| {
+            let n = f.file_name().map(|n| n.to_string_lossy().to_lowercase()).unwrap_or_default();
+            f.is_file() && n.starts_with("eboot") && n.ends_with(".bin")
+        })
+        .collect();
+    cands.sort_by_key(|f| !f.file_name().map(|n| n.to_string_lossy().to_lowercase().contains("rpcs3")).unwrap_or(false));
+    if cands.is_empty() {
+        return Err("the translation has no EBOOT file in its USRDIR (expected \"EBOOT RPCS3.BIN\")".into());
+    }
+    let mut seen = vec![];
+    for f in &cands {
+        let name = f.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let Ok(d) = fs::read(f) else { continue };
+        match unfself(&d) {
+            Ok(elf) => {
+                let h = sha1_hex(&elf);
+                if h == EN_EBOOT_SHA1 {
+                    note(p, format!("English executable: \"{name}\" (EBOOT.elf SHA-1 {h})"));
+                    return Ok(elf);
+                }
+                seen.push(format!("\"{name}\" is another executable ({}…)", &h[..12]));
+            }
+            Err(_) => seen.push(format!("\"{name}\" is encrypted")),
+        }
+    }
+    Err(format!(
+        "none of the translation's executables is the one this port runs: {}. Use the original patch \
+         archive (Ryu ga Gotoku Kenzan! translation patch 15)",
+        seen.join(", ")
+    ))
 }
 
 fn count_files(d: &Path, n: &mut usize) {
@@ -461,4 +515,38 @@ fn install(root: &Path, disc: &Path, patch: Option<&Path>, p: &Shared) -> Result
         let _ = fs::remove_dir_all(&patch_tmp);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// KZ_TEST_PATCH=<the translation folder> KZ_TEST_DIR=<scratch, same drive>: the translation
+    /// as its "Extra Steps (RPCS3 Only)" leave it (EBOOT.BIN -> "EBOOT PS3.BIN", "EBOOT RPCS3.BIN"
+    /// -> EBOOT.BIN), and with only the console executable left: the first installs, the second
+    /// says why not.
+    #[test]
+    fn translation_eboot_by_contents() {
+        let (Ok(patch), Ok(t)) = (std::env::var("KZ_TEST_PATCH"), std::env::var("KZ_TEST_DIR")) else { return };
+        let (patch, t) = (PathBuf::from(patch), PathBuf::from(t).join("eboot-by-contents"));   // its own folder
+        let _ = fs::remove_dir_all(&t);
+        let rp = t.join("rpcs3-ready");
+        link_or_copy(&patch.join("USRDIR"), &rp.join("USRDIR")).unwrap();
+        fs::copy(patch.join("PARAM.SFO"), rp.join("PARAM.SFO")).unwrap();
+        let u = rp.join("USRDIR");
+        fs::rename(u.join("EBOOT.BIN"), u.join("EBOOT PS3.BIN")).unwrap();
+        fs::rename(u.join("EBOOT RPCS3.BIN"), u.join("EBOOT.BIN")).unwrap();
+        let p: Shared = Arc::new(Mutex::new(Default::default()));
+        let n = make_translation(&rp, &t.join("tmp"), &t.join("out"), &p).expect("RPCS3-prepared folder");
+        assert!(n > 1000);
+        assert_eq!(sha1_file(&t.join("out/USRDIR/EBOOT.elf")).as_deref(), Some(EN_EBOOT_SHA1));
+        assert!(!t.join("out/USRDIR/EBOOT.BIN").exists() && !t.join("out/USRDIR/EBOOT PS3.BIN").exists());
+        // only the console executable: refused, saying what each file is
+        fs::remove_file(u.join("EBOOT.BIN")).unwrap();
+        let e = make_translation(&rp, &t.join("tmp"), &t.join("out2"), &p).unwrap_err();
+        println!("{e}");
+        assert!(e.contains("EBOOT PS3.BIN") && e.contains("another executable"));
+        fs::remove_dir_all(&t).unwrap();
+    }
 }
