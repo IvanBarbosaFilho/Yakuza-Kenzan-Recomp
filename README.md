@@ -51,6 +51,17 @@ space and takes a few minutes. Your disc image and the patch file are only read,
 version of the port in the folders around the new one (or press **Use an existing installation…** and pick its
 folder). Its game is moved over, with its saves, settings, controls and mods; nothing is installed again.
 
+[!NOTE]
+**Already played the translation on RPCS3?** The patch's "Extra Steps (RPCS3 Only)" rename its
+files: `EBOOT RPCS3.BIN` becomes `EBOOT.BIN`, and the original `EBOOT.BIN` becomes `EBOOT PS3.BIN`.
+The installer currently looks for `EBOOT RPCS3.BIN` by name, so a folder prepared for RPCS3 fails
+with *"the translation has no EBOOT RPCS3.BIN"*. Either:
+ - point **English translation** at the original patch archive (the `.7z` / `.zip` you downloaded), or
+ - in a copy of that folder, rename `USRDIR/EBOOT.BIN` back to `EBOOT RPCS3.BIN`
+   (and `EBOOT PS3.BIN` back to `EBOOT.BIN`).
+
+The next update will find the right file by its contents, whatever its name.
+
 ### Updates
 
 From v1.0.1 on, the launcher checks GitHub for a newer release when it starts and asks before it changes
