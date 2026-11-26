@@ -20,6 +20,13 @@ cp "$W/build/KenzanRecomp" "$APP/usr/bin/"
 for m in libInfamous2Game.so libInfamous2Game_60.so libInfamous2Game_120.so; do cp "$W/build/$m" "$APP/usr/share/kenzan/"; done
 cp "$W/EBOOT_60.elf" "$W/EBOOT_120.elf" "$APP/usr/share/kenzan/"
 # shaders translated before release (tools/make_shader_seed.py; engine PS3RECOMP_VK_SHADER_SEED)
+# the Japanese original (launcher lang.rs: the Home page's language switch): its executables and
+# game modules (work/jp, lifted from the BLJM60064 EBOOT with Pakundo's JP-hash FPS patches)
+# (only in the Japanese edition, Kenzan-Japanese-x86_64.AppImage: staged here, added at the end)
+JPS=$OUT/japanese-stage; rm -rf "$JPS"; mkdir -p "$JPS"
+for f in EBOOT.elf EBOOT_60.elf EBOOT_120.elf build/libInfamous2Game.so build/libInfamous2Game_60.so build/libInfamous2Game_120.so; do
+  cp "$W/jp/$f" "$JPS/" || { echo "missing $W/jp/$f"; exit 1; }
+done
 [ -f "$W/shader_seed/seed.lst" ] && cp -r "$W/shader_seed" "$APP/usr/share/kenzan/shader_seed"
 SEVEN=$(command -v 7zz); cp "$SEVEN" "$APP/usr/libexec/7zz"
 
@@ -95,9 +102,15 @@ cp "$D/launcher/assets/OFL-ShipporiMincho.txt" "$APP/usr/share/licenses/"
 echo "== AppImage"
 RUNTIME=$OUT/runtime-x86_64
 [ -s "$RUNTIME" ] || curl -sSL -o "$RUNTIME" https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
-rm -f "$OUT/kenzan.squashfs" "$OUT/Kenzan-x86_64.AppImage"
-mksquashfs "$APP" "$OUT/kenzan.squashfs" -root-owned -noappend -comp zstd -Xcompression-level 15 -quiet
-cat "$RUNTIME" "$OUT/kenzan.squashfs" > "$OUT/Kenzan-x86_64.AppImage"
-chmod +x "$OUT/Kenzan-x86_64.AppImage"
-rm -f "$OUT/kenzan.squashfs"
-ls -la "$OUT/Kenzan-x86_64.AppImage"
+pack() {   # <AppImage name>
+  rm -f "$OUT/kenzan.squashfs" "$OUT/$1"
+  mksquashfs "$APP" "$OUT/kenzan.squashfs" -root-owned -noappend -comp zstd -Xcompression-level 15 -quiet
+  cat "$RUNTIME" "$OUT/kenzan.squashfs" > "$OUT/$1"
+  chmod +x "$OUT/$1"
+  rm -f "$OUT/kenzan.squashfs"
+  ls -la "$OUT/$1"
+}
+rm -rf "$APP/usr/share/kenzan/japanese"
+pack Kenzan-x86_64.AppImage
+mv "$JPS" "$APP/usr/share/kenzan/japanese"
+pack Kenzan-Japanese-x86_64.AppImage

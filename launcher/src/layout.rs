@@ -75,7 +75,22 @@ impl Layout {
     }
 
     /// The module and the executable to boot for a frame rate (30 = the shipped game).
-    pub fn mode(&self, fps: &str) -> (PathBuf, PathBuf) {
+    /// The game module and executable for a frame rate and language.
+    pub fn mode(&self, fps: &str, lang: crate::lang::Lang) -> (PathBuf, PathBuf) {
+        if lang == crate::lang::Lang::Jp {
+            // japanese/ (downloaded), or work/jp with its modules in build/ (a dev tree)
+            let d = crate::lang::jp_dir(self);
+            let m = if self.app.is_some() { d.clone() } else { d.join("build") };
+            #[cfg(windows)]
+            let (m30, m60, m120) = ("KenzanGame.dll", "KenzanGame_60.dll", "KenzanGame_120.dll");
+            #[cfg(not(windows))]
+            let (m30, m60, m120) = ("libInfamous2Game.so", "libInfamous2Game_60.so", "libInfamous2Game_120.so");
+            return match fps {
+                "120" => (m.join(m120), d.join("EBOOT_120.elf")),
+                "60" => (m.join(m60), d.join("EBOOT_60.elf")),
+                _ => (m.join(m30), d.join("EBOOT.elf")),
+            };
+        }
         let ebootdir = if self.app.is_some() { self.modules.clone() } else { self.work.clone() };
         #[cfg(windows)]
         let (m30, m60, m120) = ("KenzanGame.dll", "KenzanGame_60.dll", "KenzanGame_120.dll");
@@ -84,7 +99,10 @@ impl Layout {
         match fps {
             "120" => (self.modules.join(m120), ebootdir.join("EBOOT_120.elf")),
             "60" => (self.modules.join(m60), ebootdir.join("EBOOT_60.elf")),
-            _ => (self.modules.join(m30), self.game().join("PS3_GAME/USRDIR/EBOOT.elf")),
+            _ => {
+                let tr = crate::lang::translation_dir(&self.data).join("USRDIR/EBOOT.elf");
+                (self.modules.join(m30), if tr.is_file() { tr } else { self.game().join("PS3_GAME/USRDIR/EBOOT.elf") })
+            }
         }
     }
 
@@ -109,6 +127,11 @@ impl Layout {
 
     /// The command that plays the game with `env` (the launcher's settings) applied.
     pub fn play_command(&self, fps: &str, env: &[(String, String)]) -> Result<Command, String> {
+        let lang = crate::lang::get(&self.data);
+        // English over the untouched game: the translation layer (engine ppu_fs_loose_mods.h)
+        let tr = crate::lang::translation_dir(&self.data);
+        let tr_env = (lang == crate::lang::Lang::En && crate::lang::has_translation(&self.data))
+            .then(|| tr.display().to_string());
         let Some(app) = &self.app else {
             let mut cmd = Command::new("bash");
             cmd.arg(self.data.join("run.sh")).current_dir(&self.data);
@@ -117,12 +140,21 @@ impl Layout {
             cmd.env_remove("IN_NIX_SHELL").env_remove("LD_LIBRARY_PATH");
             let _ = fs::create_dir_all(self.mods());
             cmd.env("PS3_LOOSE_MODS_DIR", self.mods());
+            if lang == crate::lang::Lang::Jp {
+                cmd.env("KZ_JP", "1");
+                if crate::lang::japanese_game_ready(&self.data) {
+                    cmd.env("KZ_JP_GAME", self.game());   // else run.sh's game-jp
+                }
+            }
+            if let Some(t) = &tr_env {
+                cmd.env("PS3_TRANSLATION_DIR", t);
+            }
             for (k, v) in env {
                 cmd.env(k, v);
             }
             return Ok(cmd);
         };
-        let (module, eboot) = self.mode(fps);
+        let (module, eboot) = self.mode(fps, lang);
         let w = &self.work;
         for d in ["hdd0", "hdd1", "no_flash", "logs/player"] {
             fs::create_dir_all(w.join(d)).map_err(|e| e.to_string())?;
@@ -205,6 +237,9 @@ impl Layout {
         }
         if fps == "120" {
             cmd.env("KZ_VBLANK_HZ", "120");
+        }
+        if let Some(t) = &tr_env {
+            cmd.env("PS3_TRANSLATION_DIR", t);
         }
         for (k, v) in env {
             cmd.env(k, v);

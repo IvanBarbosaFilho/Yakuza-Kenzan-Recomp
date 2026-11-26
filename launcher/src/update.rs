@@ -20,10 +20,16 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const API: &str = "https://api.github.com/repos/IvanBarbosaFilho/Yakuza-Kenzan-Recomp/releases/latest";
 pub const RELEASES: &str = "https://github.com/IvanBarbosaFilho/Yakuza-Kenzan-Recomp/releases";
 
-#[cfg(windows)]
-const ASSET: &str = "Kenzan-Windows.zip";
-#[cfg(not(windows))]
-const ASSET: &str = "Kenzan-x86_64.AppImage";
+/// The release file of this system and edition: the Japanese edition (it has the Japanese
+/// original's files, lang.rs) updates to the Japanese edition, the normal one to the normal one.
+pub fn asset(japanese: bool) -> &'static str {
+    match (cfg!(windows), japanese) {
+        (true, false) => "Kenzan-Windows.zip",
+        (true, true) => "Kenzan-Windows-Japanese.zip",
+        (false, false) => "Kenzan-x86_64.AppImage",
+        (false, true) => "Kenzan-Japanese-x86_64.AppImage",
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Release {
@@ -71,7 +77,8 @@ pub fn current() -> String {
 }
 
 /// The latest release, when it is newer than this launcher and has a file for this system.
-pub fn check() -> Result<Option<Release>, String> {
+pub fn check(japanese: bool) -> Result<Option<Release>, String> {
+    let name = asset(japanese);
     let out = curl()
         .args(["--max-time", "15", "-H", "Accept: application/vnd.github+json", API])
         .stderr(Stdio::null())
@@ -85,7 +92,7 @@ pub fn check() -> Result<Option<Release>, String> {
     if j["draft"].as_bool() == Some(true) || j["prerelease"].as_bool() == Some(true) || !newer(&tag, &current()) {
         return Ok(None);
     }
-    let Some(asset) = j["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(ASSET))) else {
+    let Some(asset) = j["assets"].as_array().and_then(|a| a.iter().find(|x| x["name"].as_str() == Some(name))) else {
         return Ok(None);
     };
     Ok(Some(Release {
@@ -291,7 +298,7 @@ mod tests {
         let app = t.join("Kenzan-x86_64.AppImage");
         std::fs::write(&app, b"old").unwrap();
         std::env::set_var("APPIMAGE", &app);
-        let r = check().unwrap().expect("a newer release");
+        let r = check(false).unwrap().expect("a newer release");
         println!("found {} {} bytes sha {}", r.tag, r.size, r.sha256);
         let (tx, rx) = std::sync::mpsc::channel();
         install(&r, &tx).unwrap();

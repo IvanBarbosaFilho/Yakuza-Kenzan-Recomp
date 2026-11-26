@@ -12,6 +12,16 @@ if [ -n "${KZ_ASAN:-}" ]; then BIN=$W/build-asan/KenzanRecomp; export LD_PRELOAD
   export LD_LIBRARY_PATH=$(cat "$W/asan_ldpath.txt")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
   export ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:detect_odr_violation=0:verify_asan_link_order=0; fi
 EBOOT=$D/game/PS3_GAME/USRDIR/EBOOT.elf
+# PS3_TRANSLATION_DIR=<dir>: English as a layer over the untouched game (engine ppu_fs_loose_mods.h);
+# the translation's executable is <dir>/USRDIR/EBOOT.elf
+if [ -n "${PS3_TRANSLATION_DIR:-}" ] && [ -f "$PS3_TRANSLATION_DIR/USRDIR/EBOOT.elf" ]; then EBOOT=$PS3_TRANSLATION_DIR/USRDIR/EBOOT.elf; fi
+# KZ_JP=1: the Japanese original, no translation (a dev switch; the Japanese package ships these as the
+# normal names): the game in game-jp/ (KZ_JP_GAME), EBOOTs, modules and saves in work/jp/.
+KW=$W
+if [ -n "${KZ_JP:-}" ]; then
+  KW=$W/jp; export PS3_VFS_ROOT=${PS3_VFS_ROOT:-${KZ_JP_GAME:-$D/game-jp}}
+  EBOOT=$KW/EBOOT.elf
+fi
 # kenzan.ini (the launcher's settings; the in-game menu's Frame rate writes fps= there): its fps
 # is the default when KZ_FPS is not given
 export KZ_INI=$D/kenzan.ini
@@ -30,18 +40,18 @@ export PS3_ASPECT_UNSUPPORTED=${PS3_ASPECT_UNSUPPORTED-1}
 # KZ_FPS=30: the game as shipped.
 # KZ_FPS=120: the patch's "Framerate - Core: 120 FPS" (EBOOT_120.elf, its own module), the vblank at 120 Hz.
 #   120 everywhere outside the festival; the festival drops to ~40 (main thread: PPU<->SPU store coherence).
-if [ "${KZ_FPS:-60}" = 120 ] && [ -f "$W/EBOOT_120.elf" ] && [ -f "$W/build/libInfamous2Game_120.so" ]; then
-  EBOOT=$W/EBOOT_120.elf; export PS3_VFS_ROOT=${PS3_VFS_ROOT:-$D/game} KZ_VBLANK_HZ=${KZ_VBLANK_HZ:-120}
-  export PS3_GAME_MODULE=${PS3_GAME_MODULE:-$W/build/libInfamous2Game_120.so}
-elif [ "${KZ_FPS:-60}" = 60 ] && [ -f "$W/EBOOT_60.elf" ] && [ -f "$W/build/libInfamous2Game_60.so" ]; then
-  EBOOT=$W/EBOOT_60.elf; export PS3_VFS_ROOT=${PS3_VFS_ROOT:-$D/game}
-  export PS3_GAME_MODULE=${PS3_GAME_MODULE:-$W/build/libInfamous2Game_60.so}
+if [ "${KZ_FPS:-60}" = 120 ] && [ -f "$KW/EBOOT_120.elf" ] && [ -f "$KW/build/libInfamous2Game_120.so" ]; then
+  EBOOT=$KW/EBOOT_120.elf; export PS3_VFS_ROOT=${PS3_VFS_ROOT:-$D/game} KZ_VBLANK_HZ=${KZ_VBLANK_HZ:-120}
+  export PS3_GAME_MODULE=${PS3_GAME_MODULE:-$KW/build/libInfamous2Game_120.so}
+elif [ "${KZ_FPS:-60}" = 60 ] && [ -f "$KW/EBOOT_60.elf" ] && [ -f "$KW/build/libInfamous2Game_60.so" ]; then
+  EBOOT=$KW/EBOOT_60.elf; export PS3_VFS_ROOT=${PS3_VFS_ROOT:-$D/game}
+  export PS3_GAME_MODULE=${PS3_GAME_MODULE:-$KW/build/libInfamous2Game_60.so}
 fi
-mkdir -p "$W/hdd0" "$W/hdd1" "$W/no_flash" "$W/logs"
+mkdir -p "$KW/hdd0" "$W/hdd1" "$W/no_flash" "$W/logs"
 rm -rf "$W/hdd1/cache"
 export PS3_TITLE="Ryu ga Gotoku Kenzan! (ps3recomp LLE)"
-export PS3_HDD0_ROOT=$W/hdd0 PS3_HDD1_ROOT=$W/hdd1 PS3_DEV_FLASH=$W/no_flash PS3_NP_STRICT_OFFLINE=1
-export PS3_GAME_MODULE=${PS3_GAME_MODULE:-$W/build/libInfamous2Game.so}
+export PS3_HDD0_ROOT=$KW/hdd0 PS3_HDD1_ROOT=$W/hdd1 PS3_DEV_FLASH=$W/no_flash PS3_NP_STRICT_OFFLINE=1
+export PS3_GAME_MODULE=${PS3_GAME_MODULE:-$KW/build/libInfamous2Game.so}
 # Kenzan GPU sync (engine/libs/video/cellGcmSys.c "(Kenzan)"): the flip-sequence semaphore 3 nobody releases.
 export GCM_SEMA_ACQUIRE=${GCM_SEMA_ACQUIRE:-1} GCM_SEMA_ACQUIRE_MS=${GCM_SEMA_ACQUIRE_MS:-50}
 # Rumble off: with it on, 2 of 2 boots died in malloc ("unaligned tcache chunk", heap corrupted before the

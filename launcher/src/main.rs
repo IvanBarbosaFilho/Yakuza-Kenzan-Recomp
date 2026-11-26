@@ -11,6 +11,7 @@ mod layout;
 mod shortcut;
 mod update;
 mod import;
+mod lang;
 
 use art::*;
 use config::{Choice, Settings};
@@ -47,6 +48,7 @@ struct App {
     st_game: checks::Status,
     st_port: checks::Status,
     st_saves: checks::Status,
+    st_lang: checks::Status,
     t0: Instant,
     disc_path: String,
     patch_path: String,
@@ -63,6 +65,13 @@ struct App {
     upd_job: Option<(std::sync::mpsc::Receiver<String>, String)>,
     /// earlier installs of the game found around this port (import::find_near), when it has none
     near: Vec<PathBuf>,
+    /// the Install tab's "Japanese original only (no translation)"
+    jp_only: bool,
+    /// a language job (convert / add the translation) and the language to switch to after it
+    lang_job: Option<install::Shared>,
+    lang_after: Option<lang::Lang>,
+    /// the Home page asks for the ISO (to separate the translation) or the translation archive
+    lang_ask: Option<lang::Lang>,
 }
 
 /// The project folder: the first ancestor of the launcher (or of the working directory) with run.sh.
@@ -132,6 +141,7 @@ impl App {
             st_game: checks::game(&root),
             st_port: checks::port(&lay, &s.fps),
             st_saves: checks::saves(&lay),
+            st_lang: checks::language(&lay),
             lay,
             root,
             saved: s.clone(),
@@ -157,7 +167,15 @@ impl App {
             upd: None,
             upd_job: None,
             near: vec![],
+            jp_only: false,
+            lang_job: None,
+            lang_after: None,
+            lang_ask: None,
         };
+        if let Some(m) = lang::recover(&app.root) {
+            app.flash(&m);
+            app.recheck();
+        }
         // no game here, but an earlier version of the port has one nearby: offer it (Install tab)
         if !app.st_game.ok {
             app.near = import::find_near(&app.lay.data);
@@ -170,8 +188,9 @@ impl App {
             update::cleanup();
             let (tx, rx) = std::sync::mpsc::channel();
             let skip = update::skipped(&app.lay.data);
+            let japanese = lang::jp_ready(&app.lay);   // the Japanese edition updates to itself
             std::thread::spawn(move || {
-                let r = update::check().ok().flatten().filter(|r| r.tag != skip);
+                let r = update::check(japanese).ok().flatten().filter(|r| r.tag != skip);
                 let _ = tx.send(r);
             });
             app.upd_rx = Some(rx);
@@ -272,7 +291,45 @@ impl App {
         self.st_game = checks::game(&self.root);
         self.st_port = checks::port(&self.lay, &self.s.fps);
         self.st_saves = checks::saves(&self.lay);
+        self.st_lang = checks::language(&self.lay);
         self.checks_at = Some(Instant::now());
+    }
+
+    /// A language job that ended: switch to the language it prepared.
+    fn poll_lang(&mut self) {
+        let Some(job) = self.lang_job.clone() else { return };
+        let (done, ok) = job.lock().map(|g| (g.done, g.error.is_none())).unwrap_or((false, false));
+        if !done || self.lang_after.is_none() {
+            return;
+        }
+        let to = self.lang_after.take().unwrap();
+        if !ok {
+            self.recheck();
+            return;
+        }
+        self.lang_ask = None;
+        self.switch_lang(to);
+    }
+
+    /// Switch to `to`, asking first for what it still needs (the ISO, the translation).
+    fn switch_lang(&mut self, to: lang::Lang) {
+        let data = self.root.clone();
+        match to {
+            lang::Lang::Jp if !lang::japanese_game_ready(&data) => {
+                self.lang_ask = Some(lang::Lang::Jp);   // the ISO, to take the disc's files back
+                return;
+            }
+            lang::Lang::En if !lang::english_ready(&data) => {
+                self.lang_ask = Some(lang::Lang::En);   // the translation archive
+                return;
+            }
+            _ => {}
+        }
+        match lang::set(&data, to) {
+            Ok(()) => self.flash(if to == lang::Lang::Jp { "The game will start in Japanese." } else { "The game will start in English." }),
+            Err(e) => self.flash(&format!("Could not save the language: {e}")),
+        }
+        self.recheck();
     }
 
     fn save(&mut self) {
@@ -422,6 +479,7 @@ fn chip(ui: &mut egui::Ui, st: &checks::Status) {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_game();
+        self.poll_lang();
         self.update_window(ctx);
         // the embers move: ~30 redraws a second while the window is shown
         ctx.request_repaint_after(Duration::from_millis(33));
@@ -515,12 +573,13 @@ impl eframe::App for App {
                         chip(ui, &checks::Status { ok: true, text: self.gpu.clone() });
                         chip(ui, &self.st_saves);
                         chip(ui, &self.st_port);
+                        chip(ui, &self.st_lang);
                         chip(ui, &self.st_game);
                         ui.add_space(14.0);
                         if let Some(m) = &self.last_exit {
                             ui.label(RichText::new(m).color(MUTED).size(13.5));
                         }
-                        let can = self.st_game.ok && self.st_port.ok && self.game.is_none();
+                        let can = self.st_game.ok && self.st_port.ok && self.st_lang.ok && self.game.is_none();
                         let label = if self.game.is_some() { "PLAYING…" } else { "PLAY" };
                         if play_button(ui, label, can).clicked() {
                             self.play();
@@ -614,6 +673,7 @@ fn home(ui: &mut egui::Ui, app: &mut App) {
             ui.label(RichText::new(format!("Last session: {when}")).color(MUTED).size(14.0));
         }
     });
+    language_card(ui, app);
     section(ui, "Your settings");
     card(ui, |ui| {
         egui::Grid::new("summary").num_columns(2).spacing(Vec2::new(28.0, 6.0)).show(ui, |ui| {
@@ -633,6 +693,87 @@ fn home(ui: &mut egui::Ui, app: &mut App) {
         ui.add_space(4.0);
         if ui.link(RichText::new("Adjust in Graphics →").size(14.5)).clicked() {
             app.tab = Tab::Graphics;
+        }
+    });
+}
+
+/// Home's Language card: the current language and one button to the other.
+fn language_card(ui: &mut egui::Ui, app: &mut App) {
+    if !app.st_game.ok {
+        return;
+    }
+    let running = app.lang_job.as_ref().map(|j| j.lock().map(|g| !g.done).unwrap_or(false)).unwrap_or(false)
+        || app.game.is_some();
+    let cur = lang::get(&app.root);
+    section(ui, "Language");
+    card(ui, |ui| {
+        status_line(ui, &app.st_lang);
+        let other = if cur == lang::Lang::Jp { lang::Lang::En } else { lang::Lang::Jp };
+        // the normal edition has no Japanese files: the Japanese edition is a separate download
+        let edition = other != lang::Lang::Jp || lang::jp_ready(&app.lay);
+        ui.horizontal(|ui| {
+            let label = if other == lang::Lang::Jp { "Switch to Japanese" } else { "Switch to English" };
+            if ui.add_enabled(!running && edition, egui::Button::new(RichText::new(label).size(15.0))).clicked() {
+                app.switch_lang(other);
+            }
+        });
+        if !edition {
+            ui.label(RichText::new(format!("Japanese needs the Japanese edition of the port ({}). Your game, \
+                saves and settings stay as they are: download it, put it in place of this one, and switch here.",
+                update::asset(true))).color(MUTED).size(13.5));
+            if ui.link(RichText::new("Open the releases page →").size(14.0)).clicked() {
+                open_url(update::RELEASES);
+            }
+        }
+        ui.label(RichText::new("Your saves work in both languages.").color(MUTED).size(13.5));
+        match app.lang_ask {
+            Some(lang::Lang::Jp) => {
+                ui.add_space(6.0);
+                ui.label(RichText::new("This installation has the translation inside the game's files (an earlier version of the \
+                    port installed it so). To play in Japanese, the 1040 files it replaced are read back from your ISO once \
+                    (about 4.4 GB); the translation is kept beside the game, and switching is instant from then on.")
+                    .color(TEXT).size(14.0));
+                path_row(ui, "Game (ISO or folder)", "The same BLJM60064 disc the game was installed from.", &mut app.disc_path, &["iso", "ISO"], !running);
+                let ok = !running && !app.disc_path.trim().is_empty();
+                if ui.add_enabled(ok, egui::Button::new(RichText::new("Separate the translation").size(15.0))).clicked() {
+                    let p: install::Shared = Default::default();
+                    let (data, disc, job) = (app.root.clone(), PathBuf::from(app.disc_path.trim()), p.clone());
+                    std::thread::spawn(move || lang::convert(data, disc, job));
+                    app.lang_job = Some(p);
+                    app.lang_after = Some(lang::Lang::Jp);
+                }
+            }
+            Some(lang::Lang::En) => {
+                ui.add_space(6.0);
+                ui.label(RichText::new("The game was installed without the translation. Point to the community English \
+                    translation (the same archive the Install page asks for) to add it.").color(TEXT).size(14.0));
+                path_row(ui, "English translation", "The patch archive (.7z or .zip), or its folder with USRDIR and PARAM.SFO.", &mut app.patch_path, &["7z", "zip", "rar"], !running);
+                let ok = !running && !app.patch_path.trim().is_empty();
+                if ui.add_enabled(ok, egui::Button::new(RichText::new("Add the translation").size(15.0))).clicked() {
+                    let p: install::Shared = Default::default();
+                    let (data, patch, job) = (app.root.clone(), PathBuf::from(app.patch_path.trim()), p.clone());
+                    std::thread::spawn(move || lang::add_translation(data, patch, job));
+                    app.lang_job = Some(p);
+                    app.lang_after = Some(lang::Lang::En);
+                }
+            }
+            None => {}
+        }
+        if let Some(job) = app.lang_job.clone() {
+            if let Ok(g) = job.lock() {
+                if !g.done || g.error.is_some() {
+                    ui.add_space(6.0);
+                    ui.add(egui::ProgressBar::new(g.frac).fill(if g.error.is_some() { BAD } else { CRIMSON }).desired_height(18.0)
+                        .text(RichText::new(format!("{:.0}%", g.frac * 100.0)).color(Color32::WHITE)));
+                    ui.label(RichText::new(&g.step).size(14.5).color(if g.error.is_some() { BAD } else { TEXT }));
+                    if let Some(e) = &g.error {
+                        ui.label(RichText::new(format!("Error: {e}")).color(BAD));
+                    }
+                    if !g.done {
+                        ui.label(RichText::new("Do not close the launcher meanwhile.").color(GOLD).size(13.5));
+                    }
+                }
+            }
         }
     });
 }
@@ -900,11 +1041,17 @@ fn install_tab(ui: &mut egui::Ui, app: &mut App) {
     section(ui, "Files");
     card(ui, |ui| {
         path_row(ui, "Game (ISO or folder)", "Your copy of the BLJM60064 disc: the .iso file, or a folder with PS3_GAME.", &mut app.disc_path, &["iso", "ISO"], !running);
-        path_row(ui, "English translation", "The community patch archive (.7z or .zip), or the extracted folder with USRDIR and PARAM.SFO.", &mut app.patch_path, &["7z", "zip", "rar"], !running);
+        path_row(ui, "English translation", "The community patch archive (.7z or .zip), or the extracted folder with USRDIR and PARAM.SFO.", &mut app.patch_path, &["7z", "zip", "rar"], !running && !app.jp_only);
+        // the normal edition has no Japanese files: a Japanese-only install could not be played
+        if lang::jp_ready(&app.lay) {
+            ui.checkbox(&mut app.jp_only, RichText::new("Japanese original only (no translation; it can be added later from Home)").size(14.5));
+        } else {
+            app.jp_only = false;
+        }
         ui.label(RichText::new("The port includes neither the game nor the translation. Translation: majDima, Arcodeaus, jurxd, PauseForTheCat, TheEdgyNerd and contributors.").color(MUTED).size(13.0));
     });
     ui.add_space(12.0);
-    let ready = !running && !app.disc_path.trim().is_empty() && !app.patch_path.trim().is_empty();
+    let ready = !running && !app.disc_path.trim().is_empty() && (app.jp_only || !app.patch_path.trim().is_empty());
     ui.horizontal(|ui| {
         let b = egui::Button::new(RichText::new("INSTALL").font(title(18.0)).color(if ready { Color32::WHITE } else { MUTED }))
             .fill(if ready { CRIMSON } else { FIELD })
@@ -912,7 +1059,8 @@ fn install_tab(ui: &mut egui::Ui, app: &mut App) {
             .min_size(Vec2::new(160.0, 42.0));
         if ui.add_enabled(ready, b).clicked() {
             let shared: install::Shared = Default::default();
-            let (root, disc, patch) = (app.root.clone(), PathBuf::from(app.disc_path.trim()), PathBuf::from(app.patch_path.trim()));
+            let (root, disc) = (app.root.clone(), PathBuf::from(app.disc_path.trim()));
+            let patch = (!app.jp_only).then(|| PathBuf::from(app.patch_path.trim()));
             let job = shared.clone();
             std::thread::spawn(move || install::run(root, disc, patch, job));
             app.job = Some(shared);
@@ -1153,7 +1301,8 @@ fn main() -> eframe::Result {
         let p: install::Shared = Default::default();
         let root = layout::Layout::detect(find_root()).data;
         let job = p.clone();
-        let t = std::thread::spawn(move || install::run(root, PathBuf::from(&a[2]), PathBuf::from(&a[3]), job));
+        let patch = (a[3] != "-").then(|| PathBuf::from(&a[3]));   // "-": the Japanese original only
+        let t = std::thread::spawn(move || install::run(root, PathBuf::from(&a[2]), patch, job));
         let mut last = String::new();
         while !t.is_finished() {
             std::thread::sleep(Duration::from_millis(500));

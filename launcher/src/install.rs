@@ -1,11 +1,13 @@
-//! Game installer: the player's own disc dump (an ISO or an extracted folder) plus the community
-//! English translation patch become `game/` -- the layout run.sh expects -- and the result is
-//! checked against the executable the port was recompiled from.
+//! Game installer: the player's own disc dump (an ISO or an extracted folder) becomes `game/`, as
+//! on the disc, and the community English translation (optional: without it the game is the
+//! Japanese original) becomes `translation/` beside it -- a layer the engine reads over the game
+//! (lang.rs). The translation's executable is checked against the one the port was recompiled from.
 //!
 //! Steps: free-space check -> the disc's PS3_GAME (7-Zip reads the ISO's UDF tree: right names,
-//! multi-extent files whole) -> the patch's USRDIR and PARAM.SFO over it -> "EBOOT RPCS3.BIN"
+//! multi-extent files whole) -> the patch's USRDIR and PARAM.SFO into translation/ -> "EBOOT RPCS3.BIN"
 //! (a fake-signed SELF: plain or zlib segments, no keys) unwrapped to EBOOT.elf -> SHA-1 check
-//! -> only then the old game/ is moved aside (renamed, never deleted) and the new one put in place.
+//! -> only then the old game/ (and translation/) are moved aside (renamed, never deleted) and the
+//! new ones put in place.
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
@@ -75,7 +77,7 @@ pub fn seven_zip() -> Result<String, String> {
 }
 
 /// Runs 7-Zip, mapping its percentage output onto [lo, hi] of the overall bar.
-fn run_7z(p: &Shared, args: &[&std::ffi::OsStr], lo: f32, hi: f32) -> Result<(), String> {
+pub(crate) fn run_7z(p: &Shared, args: &[&std::ffi::OsStr], lo: f32, hi: f32) -> Result<(), String> {
     let exe = seven_zip()?;
     let mut child = Command::new(&exe)
         .args(args)
@@ -120,7 +122,7 @@ fn run_7z(p: &Shared, args: &[&std::ffi::OsStr], lo: f32, hi: f32) -> Result<(),
 }
 
 /// Hard-links (same disk) or copies a tree; used for an already-extracted disc folder.
-fn link_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
+pub(crate) fn link_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
     for e in fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))? {
         let e = e.map_err(|e| e.to_string())?;
@@ -130,25 +132,6 @@ fn link_or_copy(src: &Path, dst: &Path) -> Result<(), String> {
             link_or_copy(&s, &d)?;
         } else if fs::hard_link(&s, &d).is_err() {
             fs::copy(&s, &d).map_err(|e| format!("{}: {e}", s.display()))?;
-        }
-    }
-    Ok(())
-}
-
-/// Copies a tree over another, replacing files (the patch over the disc).
-fn overlay(src: &Path, dst: &Path, count: &mut usize) -> Result<(), String> {
-    fs::create_dir_all(dst).map_err(|e| format!("{}: {e}", dst.display()))?;
-    for e in fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))? {
-        let e = e.map_err(|e| e.to_string())?;
-        let s = e.path();
-        let d = dst.join(e.file_name());
-        if s.is_dir() {
-            overlay(&s, &d, count)?;
-        } else {
-            // a hard link from the disc must not be written through: replace it
-            let _ = fs::remove_file(&d);
-            fs::copy(&s, &d).map_err(|e| format!("{}: {e}", s.display()))?;
-            *count += 1;
         }
     }
     Ok(())
@@ -269,6 +252,20 @@ pub fn unfself(d: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+pub(crate) fn sha1_file(p: &Path) -> Option<String> {
+    let mut f = fs::File::open(p).ok()?;
+    let mut h = sha1_smol::Sha1::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Some(h.digest().to_string())
+}
+
 fn sha1_hex(d: &[u8]) -> String {
     let mut h = sha1_smol::Sha1::new();
     h.update(d);
@@ -276,8 +273,9 @@ fn sha1_hex(d: &[u8]) -> String {
 }
 
 /// The whole install, on its own thread; `p` carries the progress back to the window.
-pub fn run(root: PathBuf, disc: PathBuf, patch: PathBuf, p: Shared) {
-    let r = install(&root, &disc, &patch, &p);
+/// `patch` None: the Japanese original, no translation.
+pub fn run(root: PathBuf, disc: PathBuf, patch: Option<PathBuf>, p: Shared) {
+    let r = install(&root, &disc, patch.as_deref(), &p);
     if let Ok(mut g) = p.lock() {
         g.done = true;
         match r {
@@ -295,10 +293,92 @@ pub fn run(root: PathBuf, disc: PathBuf, patch: PathBuf, p: Shared) {
     }
 }
 
-fn install(root: &Path, disc: &Path, patch: &Path, p: &Shared) -> Result<(), String> {
+/// The translation (an archive, or its extracted folder) -> `tr_new` (USRDIR/<files>, PARAM.SFO,
+/// USRDIR/EBOOT.elf checked); `tmp` is where an archive is unpacked (removed after).
+pub(crate) fn make_translation(patch: &Path, tmp: &Path, tr_new: &Path, p: &Shared) -> Result<usize, String> {
+    for d in [tmp, tr_new] {
+        if d.exists() {
+            fs::remove_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
+        }
+    }
+    if !patch.exists() {
+        return Err("the translation file does not exist".into());
+    }
+    let proot = if patch.is_dir() {
+        find_patch_root(patch, 2).ok_or("the translation folder has no USRDIR and PARAM.SFO")?
+    } else {
+        set(p, "Extracting the translation…", 0.76);
+        let mut out = std::ffi::OsString::from("-o");
+        out.push(tmp.as_os_str());
+        run_7z(p, &["x".as_ref(), patch.as_os_str(), out.as_os_str()], 0.76, 0.88)?;
+        find_patch_root(tmp, 3).ok_or("the translation archive has no USRDIR and PARAM.SFO")?
+    };
+    set(p, "Preparing the translation…", 0.89);
+    let rpcs3_eboot = proot.join("USRDIR/EBOOT RPCS3.BIN");
+    if !rpcs3_eboot.is_file() {
+        return Err("the translation has no \"EBOOT RPCS3.BIN\"".into());
+    }
+    let usr = tr_new.join("USRDIR");
+    link_or_copy(&proot.join("USRDIR"), &usr)?;
+    fs::copy(proot.join("PARAM.SFO"), tr_new.join("PARAM.SFO")).map_err(|e| e.to_string())?;
+    let mut n = 0usize;
+    count_files(&usr, &mut n);
+    note(p, format!("{n} translation files"));
+
+    // the executable the port runs in English
+    set(p, "Preparing the executable…", 0.93);
+    let selfd = fs::read(usr.join("EBOOT RPCS3.BIN")).map_err(|e| e.to_string())?;
+    let elf = unfself(&selfd)?;
+    let h = sha1_hex(&elf);
+    note(p, format!("EBOOT.elf SHA-1 {h}"));
+    if h != EN_EBOOT_SHA1 {
+        return Err(format!(
+            "the resulting executable is not the expected one ({}…). A different translation version?",
+            &h[..12]
+        ));
+    }
+    fs::write(usr.join("EBOOT.elf"), &elf).map_err(|e| e.to_string())?;
+    let _ = fs::remove_file(usr.join("EBOOT RPCS3.BIN"));
+    if tmp.exists() {
+        let _ = fs::remove_dir_all(tmp);
+    }
+    Ok(n)
+}
+
+fn count_files(d: &Path, n: &mut usize) {
+    for e in fs::read_dir(d).into_iter().flatten().flatten() {
+        if e.path().is_dir() {
+            count_files(&e.path(), n);
+        } else {
+            *n += 1;
+        }
+    }
+}
+
+/// `old` aside as `<name>.old-<secs>` (a symlink is removed): never deleted.
+fn move_aside(old: &Path, p: &Shared) -> Result<(), String> {
+    if let Ok(meta) = fs::symlink_metadata(old) {
+        if meta.file_type().is_symlink() {
+            fs::remove_file(old).map_err(|e| e.to_string())?;
+        } else {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let name = old.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let to = old.with_file_name(format!("{name}.old-{secs}"));
+            fs::rename(old, &to).map_err(|e| e.to_string())?;
+            note(p, format!("The previous {name} was kept at {}", to.display()));
+        }
+    }
+    Ok(())
+}
+
+fn install(root: &Path, disc: &Path, patch: Option<&Path>, p: &Shared) -> Result<(), String> {
     let stage = root.join("game.installing");
     let patch_tmp = root.join("patch.installing");
-    for d in [&stage, &patch_tmp] {
+    let tr_stage = root.join("translation.installing");
+    for d in [&stage, &patch_tmp, &tr_stage] {
         if d.exists() {
             fs::remove_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
         }
@@ -312,8 +392,10 @@ fn install(root: &Path, disc: &Path, patch: &Path, p: &Shared) -> Result<(), Str
     if disc_is_dir && !disc.join("PS3_GAME").is_dir() {
         return Err("the game folder must contain PS3_GAME".into());
     }
-    if !patch.exists() {
-        return Err("the translation file does not exist".into());
+    if let Some(patch) = patch {
+        if !patch.exists() {
+            return Err("the translation file does not exist".into());
+        }
     }
     if !disc_is_dir {
         let free = fs4::available_space(root).map_err(|e| e.to_string())?;
@@ -353,61 +435,28 @@ fn install(root: &Path, disc: &Path, patch: &Path, p: &Shared) -> Result<(), Str
     if !sfo.windows(9).any(|w| w == b"BLJM60064") {
         return Err("the disc's PARAM.SFO is not from BLJM60064 (Ryu ga Gotoku Kenzan!)".into());
     }
+    if usrdir.join("EBOOT RPCS3.BIN").exists() {
+        return Err("this copy already has the translation in it: install from the original, untouched ISO".into());
+    }
     note(p, "Disc: BLJM60064".into());
 
-    // 2. the translation
-    let proot = if patch.is_dir() {
-        find_patch_root(patch, 2).ok_or("the translation folder has no USRDIR and PARAM.SFO")?
+    // 2. the translation, beside the game
+    if let Some(patch) = patch {
+        make_translation(patch, &patch_tmp, &tr_stage, p)?;
     } else {
-        set(p, "Extracting the translation…", 0.76);
-        let mut out = std::ffi::OsString::from("-o");
-        out.push(patch_tmp.as_os_str());
-        run_7z(p, &["x".as_ref(), patch.as_os_str(), out.as_os_str()], 0.76, 0.88)?;
-        find_patch_root(&patch_tmp, 3).ok_or("the translation archive has no USRDIR and PARAM.SFO")?
-    };
-    set(p, "Applying the translation…", 0.89);
-    let rpcs3_eboot = proot.join("USRDIR/EBOOT RPCS3.BIN");
-    if !rpcs3_eboot.is_file() {
-        return Err("the translation has no \"EBOOT RPCS3.BIN\"".into());
+        note(p, "No translation: the Japanese original.".into());
     }
-    let mut n = 0usize;
-    overlay(&proot.join("USRDIR"), &usrdir, &mut n)?;
-    let _ = fs::remove_file(stage.join("PS3_GAME/PARAM.SFO"));
-    fs::copy(proot.join("PARAM.SFO"), stage.join("PS3_GAME/PARAM.SFO")).map_err(|e| e.to_string())?;
-    note(p, format!("{n} translation files applied"));
 
-    // 3. the executable the port runs
-    set(p, "Preparing the executable…", 0.93);
-    let selfd = fs::read(usrdir.join("EBOOT RPCS3.BIN")).map_err(|e| e.to_string())?;
-    let elf = unfself(&selfd)?;
-    let h = sha1_hex(&elf);
-    note(p, format!("EBOOT.elf SHA-1 {h}"));
-    if h != EN_EBOOT_SHA1 {
-        return Err(format!(
-            "the resulting executable is not the expected one ({}…). A different translation version?",
-            &h[..12]
-        ));
-    }
-    fs::write(usrdir.join("EBOOT.elf"), &elf).map_err(|e| e.to_string())?;
-
-    // 4. into place
+    // 3. into place
     set(p, "Finishing…", 0.97);
-    let game = root.join("game");
-    if let Ok(meta) = fs::symlink_metadata(&game) {
-        if meta.file_type().is_symlink() {
-            fs::remove_file(&game).map_err(|e| e.to_string())?;
-        } else {
-            let secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let old = root.join(format!("game.old-{secs}"));
-            fs::rename(&game, &old).map_err(|e| e.to_string())?;
-            note(p, format!("The previous installation was kept at {}", old.display()));
-        }
-    }
-    fs::rename(&stage, &game).map_err(|e| e.to_string())?;
+    move_aside(&root.join("game"), p)?;
+    fs::rename(&stage, root.join("game")).map_err(|e| e.to_string())?;
     let _ = fs::remove_file(root.join("game_location.txt"));   // a game used from elsewhere until now
+    if patch.is_some() {
+        move_aside(&root.join("translation"), p)?;
+        fs::rename(&tr_stage, root.join("translation")).map_err(|e| e.to_string())?;
+    }
+    let _ = crate::lang::set(root, if patch.is_some() { crate::lang::Lang::En } else { crate::lang::Lang::Jp });
     if patch_tmp.exists() {
         let _ = fs::remove_dir_all(&patch_tmp);
     }

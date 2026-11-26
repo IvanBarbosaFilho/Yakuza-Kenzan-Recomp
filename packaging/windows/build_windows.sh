@@ -49,7 +49,7 @@ if has modules; then
   mkdir -p "$WIN/llvm/bin"
   nix-shell "$WIN/shell.nix" --run "ln -sfn \$(command -v clang-cl) '$WIN/llvm/bin/clang-cl'; ln -sfn \$(command -v lld-link) '$WIN/llvm/bin/lld-link'
     cd '$D'
-    for f in 30 60 120; do
+    for f in 30 60 120 jp30 jp60 jp120; do
       p=work/port\$f; [ \$f = 30 ] && p=port
       nice -n 19 python3 -I tools/build_module.py --port \$p --engine engine --out '$WIN/module'\$f --dll-dir '$WIN/m'\$f \
         --llvm '$WIN/llvm' --host windows --jobs '${JOBS:-12}' > '$WIN/mod'\$f.log 2>&1 || { echo \"module \$f FAILED\"; tail -5 '$WIN/mod'\$f.log; exit 1; }
@@ -74,4 +74,14 @@ if has package; then
   cp "$D/launcher/assets/OFL-ShipporiMincho.txt" "$OUT/licenses/"
   cp "$D/README.md" "$OUT/README.md"
   du -sh "$OUT"
+  zipit() { ( cd "$(dirname "$OUT")" && rm -f "$1" && "$(command -v 7zz || command -v 7z)" a -tzip -mx=7 -bso0 -bsp0 "$1" "$(basename "$OUT")" ) \
+    && ls -la "$(dirname "$OUT")/$1"; }
+  zipit Kenzan-Windows.zip
+  # the Japanese edition (launcher lang.rs: the Home page's language switch): + engine/japanese
+  mkdir -p "$OUT/engine/japanese"
+  cp "$D/work/jp/EBOOT.elf" "$D/work/jp/EBOOT_60.elf" "$D/work/jp/EBOOT_120.elf" "$OUT/engine/japanese/"
+  cp "$WIN/mjp30/Infamous2Game.dll" "$OUT/engine/japanese/KenzanGame.dll"
+  cp "$WIN/mjp60/Infamous2Game.dll" "$OUT/engine/japanese/KenzanGame_60.dll"
+  cp "$WIN/mjp120/Infamous2Game.dll" "$OUT/engine/japanese/KenzanGame_120.dll"
+  zipit Kenzan-Windows-Japanese.zip
 fi

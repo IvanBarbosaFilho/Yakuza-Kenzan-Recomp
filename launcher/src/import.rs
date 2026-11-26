@@ -27,7 +27,10 @@ pub fn game_dir(data: &Path) -> PathBuf {
 /// What `sel` is: a port's folder (with game/), a game folder (with PS3_GAME) or PS3_GAME itself.
 /// Returns (the port folder if any, the game folder).
 pub fn locate(sel: &Path) -> Option<(Option<PathBuf>, PathBuf)> {
-    let eboot = |g: &Path| g.join("PS3_GAME/USRDIR/EBOOT.elf").is_file();
+    let eboot = |g: &Path| {
+        g.join("PS3_GAME/USRDIR/EBOOT.elf").is_file()
+            || (g.join("PS3_GAME/USRDIR/EBOOT.BIN").is_file() && g.join("PS3_GAME/PARAM.SFO").is_file())
+    };
     if eboot(&sel.join("game")) {
         return Some((Some(sel.to_path_buf()), sel.join("game")));
     }
@@ -121,7 +124,7 @@ pub fn import(sel: &Path, data: &Path) -> Result<String, String> {
             copy_tree_missing(&src, &data.join("work/gamedata"), &mut n).map_err(|e| format!("Copying the saves: {e}"))?;
             done.push(format!("saves ({n} file(s))"));
         }
-        for f in ["kenzan.ini", "input.toml"] {
+        for f in ["kenzan.ini", "input.toml", "language.txt"] {
             if port.join(f).is_file() && !data.join(f).exists() {
                 fs::copy(port.join(f), data.join(f)).map_err(|e| e.to_string())?;
                 done.push(f.to_string());
@@ -137,8 +140,15 @@ pub fn import(sel: &Path, data: &Path) -> Result<String, String> {
     }
     let _ = fs::remove_dir_all(&here); // an empty or broken leftover (checked above: no PS3_GAME)
     let _ = fs::remove_file(data.join("game_location.txt"));
+    // the translation layer lives beside its game (lang.rs): it moves with it
+    let tr_old = game.parent().map(|p| p.join("translation"));
     match fs::rename(&game, &here) {
         Ok(()) => {
+            if let Some(t) = tr_old.filter(|t| t.join("USRDIR/EBOOT.elf").is_file()) {
+                if !data.join("translation").exists() && fs::rename(&t, data.join("translation")).is_ok() {
+                    done.push("translation".into());
+                }
+            }
             if let Some(port) = &port {
                 // the earlier port reads its game from here now, if it is ever started again
                 let _ = fs::write(port.join("game_location.txt"), here.display().to_string());
