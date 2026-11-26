@@ -4,7 +4,7 @@
 
 <h1 align="center">Yakuza Kenzan Recomp</h1>
 
-**Like a Dragon: Kenzan! (PS3, 2008), recompiled into a real PC program for Linux and Windows, in English.**<br>
+**Like a Dragon: Kenzan! (PS3, 2008), recompiled into a real PC program for Linux and Windows, in English or Japanese.**<br>
 No emulator while you play.
 
 [![Latest release](https://img.shields.io/github/v/release/IvanBarbosaFilho/Yakuza-Kenzan-Recomp?label=latest&color=f2b200)](../../releases/latest)
@@ -12,7 +12,7 @@ No emulator while you play.
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#windows)
 [![Renderer: Vulkan](https://img.shields.io/badge/renderer-Vulkan-AC162C?logo=vulkan&logoColor=white)](#how-it-works)
 [![60 / 120 FPS](https://img.shields.io/badge/frame%20rate-30%20%E2%80%A2%2060%20%E2%80%A2%20120-6250d6)](#what-you-get)
-[![English](https://img.shields.io/badge/language-English-1baf7a)](#credits)
+[![English / Japanese](https://img.shields.io/badge/language-English%20%7C%20Japanese-1baf7a)](#which-file-to-download)
 
 </div>
 
@@ -25,49 +25,61 @@ Kenzan! never left Japan and never got a PC version. This port takes the game's 
 program and its SPU programs), translates it into C/C++ and compiles it for the PC. The game then runs directly on
 your CPU, with its graphics drawn through Vulkan, at 1080p and up, at 30, 60 or 120 FPS.
 
-It plays in English thanks to the community translation patch ([credits](#credits)), which the launcher applies
-for you when it installs the game.
+It plays in English thanks to the community translation patch ([credits](#credits)), which the launcher sets up
+for you when it installs the game. The Japanese edition also plays the Japanese original, and switches between the
+two with one button.
 
 > **You need your own copy of the game.** The release contains the port (the engine, the launcher and the
 > game's recompiled code) but **no game data**: models, textures, sound, video and text all come from your own
 > disc, and the English text from the translation patch.
 
+## Which file to download
+
+Each release has two editions for each system. **Download one file**, for your system:
+
+| | English only | English + Japanese |
+|---|---|---|
+| **Linux** | `Kenzan-x86_64.AppImage` (~400 MB) | `Kenzan-Japanese-x86_64.AppImage` (~760 MB) |
+| **Windows** | `Kenzan-Windows.zip` (~370 MB) | `Kenzan-Windows-Japanese.zip` (~730 MB) |
+
+- **English only:** the game with the community English translation. Pick this one if you only want to play in
+  English.
+- **English + Japanese:** the same port, plus the Japanese original's own recompiled code. The **Home** page
+  switches between English and Japanese with one button (instant, nothing copied), and the game can also be
+  installed in Japanese only, without the translation. Your saves work in both languages.
+
+Both editions get the same updates; the updater keeps you on the edition you have. To go from the English-only
+edition to the Japanese one, download it and put it in place of the other (Windows: unpack it over the same
+folder); your game, saves and settings stay.
+
 ## Install
 
-1. Download the release for your system from the [latest release](../../releases/latest):
-   - **Linux:** `Kenzan-x86_64.AppImage`
-   - **Windows:** `Kenzan-Windows.zip`, unpacked into a folder on a local drive, for example `C:\Games\Kenzan`
-     (not *Program Files*).
-2. Start it (`Kenzan-x86_64.AppImage`, or `Kenzan Launcher.exe` on Windows) and open the **Install** tab.
+1. Download your file from the [latest release](../../releases/latest) (see [above](#which-file-to-download)).
+   On Windows, unpack the zip into a folder on a local drive, for example `C:\Games\Kenzan` (not *Program Files*).
+2. Start it (the `.AppImage`, or `Kenzan Launcher.exe` on Windows) and open the **Install** tab.
 3. Pick **your game** (the disc image `.iso`, or the extracted disc folder that holds `PS3_GAME`) and the
    **English translation patch** (its `.7z`, or its extracted folder). Press **Install**.
+   In the Japanese edition you can tick **Japanese original only** instead; the translation can be added later
+   from the Home page.
 4. Press **Play**.
 
-The install copies the disc and applies the translation into the port's own folder, then checks the result
-against the executable the port was recompiled from, before it replaces anything. It needs about 23 GB of free
-space and takes a few minutes. Your disc image and the patch file are only read, never changed.
+The install copies the disc as it is into the port's own folder and keeps the translation beside it (the game
+reads the translated files over the original ones), then checks the translation's executable against the one the
+port was recompiled from, before it replaces anything. It needs about 23 GB of free space and takes a few minutes.
+Your disc image and the patch file are only read, never changed. A log of each install is kept in
+`work/logs/install.txt`.
 
 **Already installed it with an earlier version?** Do not install again: the **Install** tab finds an earlier
 version of the port in the folders around the new one (or press **Use an existing installation…** and pick its
 folder). Its game is moved over, with its saves, settings, controls and mods; nothing is installed again.
 
-[!NOTE]
-**Already played the translation on RPCS3?** The patch's "Extra Steps (RPCS3 Only)" rename its
-files: `EBOOT RPCS3.BIN` becomes `EBOOT.BIN`, and the original `EBOOT.BIN` becomes `EBOOT PS3.BIN`.
-The installer currently looks for `EBOOT RPCS3.BIN` by name, so a folder prepared for RPCS3 fails
-with *"the translation has no EBOOT RPCS3.BIN"*. Either:
- - point **English translation** at the original patch archive (the `.7z` / `.zip` you downloaded), or
- - in a copy of that folder, rename `USRDIR/EBOOT.BIN` back to `EBOOT RPCS3.BIN`
-   (and `EBOOT PS3.BIN` back to `EBOOT.BIN`).
-
-The next update will find the right file by its contents, whatever its name.
-
 ### Updates
 
 From v1.0.1 on, the launcher checks GitHub for a newer release when it starts and asks before it changes
-anything: **Update now** downloads it, checks it, replaces the port's own files and starts the new version
-(your game, saves, settings, controls and mods are kept); **Later** asks again next time; **Skip this version**
-does not ask about that one again. If you are on v1.0.0, download v1.0.1 by hand once.
+anything: **Update now** downloads it (the same edition you have), checks it, replaces the port's own files and
+starts the new version (your game, saves, settings, controls and mods are kept); **Later** asks again next time;
+**Skip this version** does not ask about that one again. If you are on v1.0.0, download the latest release by
+hand once.
 
 ## What you need
 
@@ -89,8 +101,9 @@ does not ask about that one again. If you are on v1.0.0, download v1.0.1 by hand
 - **An in-game settings menu,** a frame-rate counter and the original PS3 look on a key.
 - **Saves** in the port's folder, in the PS3's own format.
 - **Mods:** the launcher's **Mods** tab adds mod `.zip` files and turns them on or off (see [Mods](#mods)).
-- **Shaders ready from the first start:** the release ships the game's shaders already translated, so the first
-  session does not stutter while they are built.
+- **Shaders ready from the first start:** the release ships the game's shaders already translated, and new ones
+  are built in the background, so the first session does not stutter while they are built.
+- **English or Japanese** (Japanese edition): one button on the Home page switches the language.
 
 ### Keys
 
@@ -147,11 +160,14 @@ Yes: copy the `BLJM60064…` folders from RPCS3's `dev_hdd0/home/00000001/saveda
 
 **The game looks or runs wrong, or closes.**
 Please [open an issue](../../issues) with your PC's CPU and graphics card, what you were doing, and the log:
-`work/logs/last_run_err.txt` (the launcher's **Log** tab shows it and opens its folder).
+`work/logs/last_run_err.txt` (the launcher's **Log** tab shows it and opens its folder). If the install itself
+fails, send `work/logs/install.txt`.
 
 **Does it work with the original Japanese text?**
-The launcher installs the English version only: the port is recompiled from the translated executable, and the
-install checks that it is that one.
+Yes, with the **English + Japanese** edition (see [Which file to download](#which-file-to-download)): switch on
+the Home page, or install the Japanese original only. If your game was installed by v1.0.0 (the translation inside
+the game's files), the first switch to Japanese asks for your disc image once, to read back the files the
+translation replaced; from then on switching is instant.
 
 ## How it works
 
