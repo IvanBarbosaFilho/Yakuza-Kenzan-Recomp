@@ -64,6 +64,16 @@ LDSO=$(ldd "$APP/usr/bin/KenzanRecomp" | awk '/ld-linux-x86-64/ {print $1}')
 cp -L "$LDSO" "$APP/usr/lib/ld-linux-x86-64.so.2"
 chmod +x "$APP/usr/lib/ld-linux-x86-64.so.2"
 echo "   $(ls "$APP/usr/lib" | wc -l) libraries"
+# GL/EGL and Vulkan loaders for systems that keep none in the usual folders (NixOS: libglvnd and
+# vulkan-loader live in the nix store). Vendor-neutral dispatchers only -- the drivers stay the host's
+# (nixpkgs' builds look for them in /run/opengl-driver/share, /etc and /usr/share). AppRun puts them
+# on the path only when the host has no libEGL.so.1 / libvulkan.so.1 of its own.
+FB="$APP/usr/lib/fallback"; mkdir -p "$FB"
+GLVND=$(nix-build '<nixpkgs>' -A libglvnd --no-out-link)
+VKL=$(nix-build '<nixpkgs>' -A vulkan-loader --no-out-link)
+for l in libEGL.so.1 libGL.so.1 libGLX.so.0 libGLdispatch.so.0 libOpenGL.so.0 libGLESv2.so.2; do cp -L "$GLVND/lib/$l" "$FB/$l"; done
+cp -L "$VKL/lib/libvulkan.so.1" "$FB/libvulkan.so.1"
+for f in "$FB"/*.so*; do add_with_deps "$f"; done
 
 echo "== launchers"
 cat > "$APP/AppRun" <<'EOF'
@@ -75,6 +85,9 @@ export KZ_APPDIR="$HERE"
 export KZ_LDSO="$HERE/usr/lib/ld-linux-x86-64.so.2"
 HOST=/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu:/usr/lib64:/lib64:/usr/lib:/lib:/run/opengl-driver/lib
 export KZ_LIBPATH="$HERE/usr/lib:$HOST"
+# no GL/EGL or Vulkan loader of the host's (NixOS): the bundle's (usr/lib/fallback), after the host's
+has() { local IFS=:; for d in $HOST; do [ -e "$d/$1" ] && return 0; done; return 1; }
+if ! has libEGL.so.1 || ! has libvulkan.so.1; then export KZ_LIBPATH="$KZ_LIBPATH:$HERE/usr/lib/fallback"; fi
 export PATH="$HERE/usr/bin:$PATH"
 exec "$KZ_LDSO" --library-path "$KZ_LIBPATH" "$HERE/usr/bin/kenzan-launcher" "$@"
 EOF
