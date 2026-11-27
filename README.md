@@ -222,6 +222,12 @@ bash packaging/windows/build_windows.sh   # cross-builds the Windows folder (cla
   unmodified for the install), and the Shippori Mincho font (SIL OFL 1.1). Their license files are in
   `engine/third_party/`, `launcher/assets/` and the release's `licenses/` folder.
 
+## License
+
+The port's code is under the [MIT License](LICENSE); the engine keeps its own MIT notice
+([`engine/LICENSE`](engine/LICENSE)) and each third-party library its own license (see Credits).
+None of this covers the game: its files and code belong to SEGA and are not part of this repository.
+
 ## Legal
 
 This is a fan project for people who own the game. It is not affiliated with or endorsed by SEGA or Sony
