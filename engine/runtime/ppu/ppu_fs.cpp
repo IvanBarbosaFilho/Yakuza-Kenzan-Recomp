@@ -65,6 +65,36 @@ extern "C" const char* ppu_vfs_root = ".";
 #include "ppu_fs_mods.h"
 #include "ppu_fs_loose_mods.h"   /* the Yakuza titles' replacement-file mods */
 
+/* (Kenzan) a slow disk and an antivirus, simulated -- for reproducing boot races that only a player with an
+ * HDD or a scanning antivirus meets: only the reading thread waits, as on a real slow disk, while the rest
+ * of the game runs on. KZ_FS_OPEN_DELAY_MS=<ms>: the FIRST open of each file waits that long (a scan);
+ * KZ_FS_READ_DELAY_MS=<ms>: every read waits that long; KZ_FS_READ_MBPS=<MB/s>: and as long as that many
+ * MB a second take (an HDD ~80). Unset: nothing. */
+#include <thread>
+#include <chrono>
+#include <mutex>
+#include <set>
+#include <string>
+static void kz_fs_slow_open(const char* gpath)
+{
+    static long ms = -1;
+    if (ms < 0) { const char* e = getenv("KZ_FS_OPEN_DELAY_MS"); ms = e ? atol(e) : 0; if (ms > 0) fprintf(stderr, "[fs] simulated scan: %ld ms on each file's first open (KZ_FS_OPEN_DELAY_MS)\n", ms); }
+    if (ms <= 0) return;
+    static std::mutex mu; static std::set<std::string> seen;
+    { std::lock_guard<std::mutex> g(mu); if (!seen.insert(gpath).second) return; }
+    std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+}
+static void kz_fs_slow_read(size_t bytes)
+{
+    static long ms = -1; static double mbps = 0;
+    if (ms < 0) { const char* e = getenv("KZ_FS_READ_DELAY_MS"); ms = e ? atol(e) : 0;
+                  const char* m = getenv("KZ_FS_READ_MBPS"); mbps = m ? atof(m) : 0;
+                  if (ms > 0 || mbps > 0) fprintf(stderr, "[fs] simulated slow disk: %ld ms a read, %.0f MB/s (KZ_FS_READ_DELAY_MS / _MBPS)\n", ms, mbps); }
+    long us = ms * 1000;
+    if (mbps > 0) us += (long)((double)bytes / (mbps * 1e6) * 1e6);
+    if (us > 0) std::this_thread::sleep_for(std::chrono::microseconds(us));
+}
+
 /* CELL_FS return / mode / flag constants. */
 #define CELL_OK              0
 #define CELL_FS_ENOENT       (-2147418106)   /* 0x80010006 -- was -2147418090, which is 0x80010016 = CELL_ENOTCONN, not ENOENT */
@@ -276,6 +306,7 @@ static void cellFsOpen(ppu_context* ctx)
     if (fd < 0) { fclose(f); ctx->gpr[3] = (uint64_t)(int64_t)CELL_FS_EIO; return; }
     if (fd_ptr) vm_write32(fd_ptr, (uint32_t)fd);
     g_fd_usm[fd] = (strstr(gpath, ".usm") != nullptr) ? 1 : 0;
+    kz_fs_slow_open(gpath);   /* KZ_FS_OPEN_DELAY_MS: a slow disk / an antivirus scan (tests) */
     lang_on_open(fd, hpath);   /* a language's archive TOC / movie tracks to patch on read */
     gmods::on_open(fd, hpath);  /* an archive: the files mods change hidden from its TOC */
     /* FS_CALLER=1: name the guest function that opened each file. A title whose
@@ -456,6 +487,7 @@ static void cellFsRead(ppu_context* ctx)
           if (!once++) fprintf(stderr, "[fs] PS3_FSLOG_EOF: fd=%d truncated at %ld bytes\n", fd, (long)elim);
           n = 0;
       } }
+    kz_fs_slow_read(n);       /* KZ_FS_READ_DELAY_MS / KZ_FS_READ_MBPS: a slow disk (tests) */
     if (g_fd_usm[fd] && getenv("PS3_FSLOG_READS")) fprintf(stderr, "[USMRD] READ usm fd=%d nbytes=%llu -> %zu magic=%02X%02X%02X%02X pos=%ld lr=0x%08X\n", fd, (unsigned long long)nbytes, n, vm_base[buf], vm_base[buf+1], vm_base[buf+2], vm_base[buf+3], fpos_before, (uint32_t)ctx->lr);
     /* PS3_FSLOG_READS=<fd>: log every read on one descriptor. PS3_FSLOG caps at 20
      * lines and they are all spent before a movie ever opens, so it cannot

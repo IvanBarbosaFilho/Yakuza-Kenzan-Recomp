@@ -238,6 +238,19 @@ static void trim(char*& s)
     for (char* e = s + strlen(s) - 1; e >= s && (*e == '\n' || *e == '\r' || *e == ' ' || *e == '\t' || *e == '"'); e--) *e = 0;
 }
 
+/* PS3RECOMP_RENDER_SCALE as a factor: a number, or 720p/native (1), 1080p (1.5), 1440p (2), 4k/2160p (3).
+ * "720p" read with atof alone was 720 -- the menu then showed (and on any change saved) 4K. */
+static double render_scale_value(const char* e)
+{
+    if (!e || !*e) return 1.0;
+    if (!SDL_strcasecmp(e, "720p") || !SDL_strcasecmp(e, "native")) return 1.0;
+    if (!SDL_strcasecmp(e, "1080p")) return 1.5;
+    if (!SDL_strcasecmp(e, "1440p")) return 2.0;
+    if (!SDL_strcasecmp(e, "4k") || !SDL_strcasecmp(e, "2160p")) return 3.0;
+    const double v = atof(e);
+    return v > 0.0 ? v : 1.0;
+}
+
 static int var_index(const char* k)
 {
     for (int i = 0; i < V_N; i++) if (!strcmp(k, kVar[i])) return i;
@@ -1300,11 +1313,7 @@ static void ui_load(void)
       const bool culls = t < 0 || spu_patch_alt(t) == 0;
       const char* e = getenv(kVar[V_EDGE_VP]);       /* [edgevp] culling at the render resolution */
       s_ui.mesh_trim = !culls ? 1 : (e && e[0] == '0') ? 2 : 0; }
-    { const char* e = getenv(kVar[V_RENDER_SCALE]);   /* [res] numbers or 720p/1080p/1440p/4k */
-      double v = e ? atof(e) : 1.0;
-      if (e && !SDL_strcasecmp(e, "1080p")) v = 1.5;
-      else if (e && !SDL_strcasecmp(e, "1440p")) v = 2.0;
-      else if (e && (!SDL_strcasecmp(e, "4k") || !SDL_strcasecmp(e, "2160p"))) v = 3.0;
+    { const double v = render_scale_value(getenv(kVar[V_RENDER_SCALE]));   /* [res] numbers or 720p/1080p/1440p/4k */
       s_ui.scale = v >= 2.5 ? 3 : v >= 1.75 ? 2 : v >= 1.25 ? 1 : 0; }
     { const int v = vk_postfx_aniso();
       s_ui.aniso = v >= 16 ? 4 : v >= 8 ? 3 : v >= 4 ? 2 : v >= 2 ? 1 : 0; }

@@ -12,6 +12,7 @@ mod shortcut;
 mod update;
 mod import;
 mod lang;
+mod verify;
 
 use art::*;
 use config::{Choice, Settings};
@@ -53,6 +54,9 @@ struct App {
     disc_path: String,
     patch_path: String,
     job: Option<install::Shared>,
+    /// V1.0.3: the game-file check (verify.rs), and whether one is due when the running install ends
+    verify_job: Option<install::Shared>,
+    verify_after_install: bool,
     inp: controls::InputFile,
     capture: Option<usize>,
     capture_mods: egui::Modifiers,
@@ -159,6 +163,8 @@ impl App {
             disc_path: String::new(),
             patch_path: String::new(),
             job: None,
+            verify_job: None,
+            verify_after_install: false,
             inp: controls::InputFile::load(&lay_input),
             capture: None,
             capture_mods: egui::Modifiers::default(),
@@ -575,6 +581,9 @@ impl eframe::App for App {
                         chip(ui, &self.st_port);
                         chip(ui, &self.st_lang);
                         chip(ui, &self.st_game);
+                        if let Some((false, why)) = verify::last_result(&self.root) {
+                            chip(ui, &checks::Status { ok: false, text: format!("Game files: {} (Install tab)", why.split(':').next().unwrap_or("damaged")) });
+                        }
                         ui.add_space(14.0);
                         if let Some(m) = &self.last_exit {
                             ui.label(RichText::new(m).color(MUTED).size(13.5));
@@ -1064,6 +1073,7 @@ fn install_tab(ui: &mut egui::Ui, app: &mut App) {
             let job = shared.clone();
             std::thread::spawn(move || install::run(root, disc, patch, job));
             app.job = Some(shared);
+            app.verify_after_install = true;   /* the files checked as soon as it ends well */
         }
         if running {
             ui.label(RichText::new("Do not close the launcher while installing.").color(GOLD));
@@ -1087,6 +1097,57 @@ fn install_tab(ui: &mut egui::Ui, app: &mut App) {
                 });
             if g.done {
                 app.checks_at = None;   // re-check the game on the next frame
+                if app.verify_after_install && g.error.is_none() {
+                    app.verify_after_install = false;
+                    start_verify(app);
+                }
+            }
+        }
+    }
+    verify_section(ui, app);
+}
+
+/// V1.0.3: start the game-file check (verify.rs) on its own thread.
+fn start_verify(app: &mut App) {
+    let p: install::Shared = Default::default();
+    let (data, job) = (app.root.clone(), p.clone());
+    std::thread::spawn(move || verify::run(data, job));
+    app.verify_job = Some(p);
+}
+
+/// The Install tab's "Game files" card: the button, the progress, what is wrong.
+fn verify_section(ui: &mut egui::Ui, app: &mut App) {
+    let running = app.verify_job.as_ref().map(|j| j.lock().map(|g| !g.done).unwrap_or(false)).unwrap_or(false);
+    ui.add_space(10.0);
+    section(ui, "Game files");
+    card(ui, |ui| {
+        ui.label(RichText::new("Compares every file of the installed game with the disc's. A damaged dump or extraction \
+            can make the game hang while loading (a loud looping sound, a black screen).").color(MUTED).size(14.0));
+        ui.add_space(6.0);
+        let b = egui::Button::new(RichText::new(if running { "Checking…" } else { "Verify game files" }).color(Color32::WHITE))
+            .fill(CRIMSON).stroke(Stroke::new(1.0, GOLD));
+        if ui.add_enabled(!running && app.st_game.ok, b).clicked() {
+            start_verify(app);
+        }
+    });
+    if let Some(job) = app.verify_job.clone() {
+        if let Ok(g) = job.lock() {
+            ui.add_space(8.0);
+            let bad = g.error.is_some();
+            ui.add(egui::ProgressBar::new(g.frac).fill(if bad { BAD } else { CRIMSON }).desired_height(20.0)
+                .text(RichText::new(format!("{:.0}%", g.frac * 100.0)).color(Color32::WHITE)));
+            ui.label(RichText::new(&g.step).font(title(15.0)).color(if bad { BAD } else if g.done { GOLD } else { TEXT }));
+            if g.done && bad {
+                egui::Frame::new().fill(Color32::from_rgb(0x0E, 0x0A, 0x09)).stroke(Stroke::new(1.0, LINE))
+                    .corner_radius(CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        for l in g.log.iter().filter(|l| l.contains(": ")).take(12) {
+                            ui.label(RichText::new(l).monospace().size(12.5).color(MUTED));
+                        }
+                    });
+            }
+            if g.done {
+                app.checks_at = None;   // the Home page's warning follows the new result
             }
         }
     }
@@ -1296,6 +1357,18 @@ fn main() -> eframe::Result {
         let st = cmd.status().expect("spawn");
         println!("game exited: {st}");
         std::process::exit(if st.success() { 0 } else { 1 });
+    }
+    if a.len() >= 2 && a[1] == "--verify" {
+        // V1.0.3: the game-file check without the window: --verify [<data folder>] (default: this
+        // install's). Prints the result; exit 0 = intact, 1 = damaged/missing files.
+        let data = a.get(2).map(PathBuf::from).unwrap_or_else(find_root);
+        let p: install::Shared = Default::default();
+        verify::run(data, p.clone());
+        let g = p.lock().unwrap();
+        for l in &g.log {
+            println!("{l}");
+        }
+        std::process::exit(if g.error.is_none() { 0 } else { 1 });
     }
     if a.len() == 2 && a[1] == "--self-update" {
         // the Update button's own path, without the window (tests: under Wine for the Windows

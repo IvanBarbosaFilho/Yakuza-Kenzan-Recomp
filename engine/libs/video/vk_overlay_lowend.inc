@@ -125,7 +125,7 @@ static void lowend_preset(bool low)
     }
     s_ui_stale = true;
     const char* rs = getenv("PS3RECOMP_RENDER_SCALE");
-    const bool restart = fabs((rs ? atof(rs) : 1.0) - (double)vk_postfx_render_scale()) > 0.01;
+    const bool restart = fabs(render_scale_value(rs) - (double)vk_postfx_render_scale()) > 0.01;
     char b[160];
     snprintf(b, sizeof b, "%s settings on%s", low ? "Low-end PC" : "Standard",
              restart ? " (the internal resolution changes at the next start)" : "");
